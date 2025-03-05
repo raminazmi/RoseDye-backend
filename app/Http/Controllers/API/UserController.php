@@ -88,6 +88,7 @@ class UserController extends Controller
             'linkedin' => 'nullable|url|max:255',
             'instagram' => 'nullable|url|max:255',
             'github' => 'nullable|url|max:255',
+            'password' => 'sometimes|min:6|confirmed',
         ]);
 
         if ($validator->fails()) {
@@ -98,17 +99,11 @@ class UserController extends Controller
         }
 
         $user = Auth::user();
-        $user->update($request->only([
-            'name',
-            'email',
-            'phone',
-            'bio',
-            'facebook',
-            'twitter',
-            'linkedin',
-            'instagram',
-            'github'
-        ]));
+        $data = $request->only(['name', 'email', 'phone', 'bio', 'facebook', 'twitter', 'linkedin', 'instagram', 'github']);
+        if ($request->filled('password')) {
+            $data['password'] = bcrypt($request->password);
+        }
+        $user->update($data);
 
         return response()->json([
             'status' => true,
