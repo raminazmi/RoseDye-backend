@@ -7,6 +7,7 @@ use App\Models\Subscription;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Mpdf\Mpdf;
+use Illuminate\Support\Facades\Validator;
 
 class SubscriptionController extends Controller
 {
@@ -117,31 +118,20 @@ class SubscriptionController extends Controller
 
         try {
             $client = new \GuzzleHttp\Client();
-            $params = [
-                'token' => env('ULTRAMSG_TOKEN'),
-                'to' => $subscription->client->phone,
-                'body' => $request->message,
-            ];
-
             $response = $client->post('https://api.ultramsg.com/instance60138/messages/chat', [
-                'form_params' => $params,
-                'headers' => [
-                    'Content-Type' => 'application/x-www-form-urlencoded',
+                'form_params' => [
+                    'token' => env('ULTRAMSG_TOKEN'),
+                    'to' => $subscription->client->phone,
+                    'body' => $request->message,
                 ],
+                'headers' => ['Content-Type' => 'application/x-www-form-urlencoded'],
             ]);
 
             $result = json_decode($response->getBody(), true);
-
-            if (isset($result['sent']) && $result['sent'] === 'true') {
-                return response()->json([
-                    'status' => true,
-                    'message' => 'تم إرسال التنبيه بنجاح'
-                ]);
+            if ($result['sent'] === 'true') {
+                return response()->json(['status' => true, 'message' => 'تم إرسال التنبيه بنجاح']);
             } else {
-                return response()->json([
-                    'status' => false,
-                    'message' => 'فشل في إرسال التنبيه: ' . ($result['error'] ?? 'خطأ غير محدد')
-                ], 500);
+                return response()->json(['status' => false, 'message' => 'فشل في إرسال التنبيه: ' . ($result['error'] ?? 'خطأ غير محدد')], 500);
             }
         } catch (\Exception $e) {
             return response()->json([
@@ -194,8 +184,11 @@ class SubscriptionController extends Controller
             ])->render();
 
             $mpdf->WriteHTML($html);
-
-            return $mpdf->Output('subscriptions-report.pdf', 'D');
+            $pdfContent = $mpdf->Output('', 'S');
+            return response()->make($pdfContent, 200, [
+                'Content-Type' => 'application/pdf',
+                'Content-Disposition' => 'attachment; filename="subscriptions-report.pdf"',
+            ]);
         } catch (\Exception $e) {
             Log::error('PDF Export Error: ' . $e->getMessage());
             return response()->json([
