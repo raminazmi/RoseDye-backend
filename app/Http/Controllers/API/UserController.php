@@ -6,6 +6,7 @@ use App\Http\Controllers\Controller;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Auth;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\Log;
 
 class UserController extends Controller
 {
@@ -18,11 +19,11 @@ class UserController extends Controller
 
     public function updateAvatar(Request $request)
     {
-        \Log::info('Request received:', $request->all());
-        \Log::info('Files in request:', $request->allFiles());
+        Log::info('Request received:', $request->all());
+        Log::info('Files in request:', $request->allFiles());
 
         if (!$request->hasFile('avatar')) {
-            \Log::error('No file uploaded');
+            Log::error('No file uploaded');
             return response()->json(['message' => 'No file uploaded'], 422);
         }
 
@@ -45,13 +46,24 @@ class UserController extends Controller
 
         $avatarsPath = public_path('avatars');
         if (!file_exists($avatarsPath)) {
+            Log::info('Creating avatars directory at: ' . $avatarsPath);
             mkdir($avatarsPath, 0777, true);
+            chmod($avatarsPath, 0777);
+        } elseif (!is_writable($avatarsPath)) {
+            Log::error('Directory is not writable: ' . $avatarsPath);
+            return response()->json(['message' => 'Unable to write in the avatars directory'], 500);
         }
 
         $image = $request->file('avatar');
         $imageName = time() . '.' . $image->getClientOriginalExtension();
 
-        $image->move($avatarsPath, $imageName);
+        try {
+            $image->move($avatarsPath, $imageName);
+            Log::info('Image moved successfully to: ' . $avatarsPath . '/' . $imageName);
+        } catch (\Exception $e) {
+            Log::error('Failed to move image: ' . $e->getMessage());
+            return response()->json(['message' => 'Unable to upload the image'], 500);
+        }
 
         $user->avatar = 'avatars/' . $imageName;
         $user->save();
