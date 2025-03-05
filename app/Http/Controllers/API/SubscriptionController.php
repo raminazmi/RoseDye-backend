@@ -168,7 +168,7 @@ class SubscriptionController extends Controller
                 ], 404);
             }
 
-            $mpdf = new Mpdf([
+            $mpdf = new \Mpdf\Mpdf([
                 'mode' => 'utf-8',
                 'format' => 'A4',
                 'margin_top' => 20,
@@ -182,10 +182,8 @@ class SubscriptionController extends Controller
                 'subscriptions' => $data,
                 'title' => 'تقارير الاشتراكات'
             ])->render();
-
             $mpdf->WriteHTML($html);
-            $pdfContent = $mpdf->Output('', 'S');
-            return response()->make($pdfContent, 200, [
+            return response()->make($mpdf->Output('', 'S'), 200, [
                 'Content-Type' => 'application/pdf',
                 'Content-Disposition' => 'attachment; filename="subscriptions-report.pdf"',
             ]);
