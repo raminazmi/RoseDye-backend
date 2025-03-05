@@ -27,7 +27,7 @@ class UserController extends Controller
         }
 
         $validator = Validator::make($request->all(), [
-            'avatar' => 'required|image|mimes:jpeg,png,jpg,gif,svg|max:2048'
+            'avatar' => 'required|image|mimes:jpeg,png,jpg,gif,svg|max:2048',
         ]);
 
         if ($validator->fails()) {
@@ -43,10 +43,15 @@ class UserController extends Controller
             unlink(public_path($user->avatar));
         }
 
+        $avatarsPath = public_path('avatars');
+        if (!file_exists($avatarsPath)) {
+            mkdir($avatarsPath, 0777, true);
+        }
+
         $image = $request->file('avatar');
         $imageName = time() . '.' . $image->getClientOriginalExtension();
 
-        $image->move(public_path('avatars'), $imageName);
+        $image->move($avatarsPath, $imageName);
 
         $user->avatar = 'avatars/' . $imageName;
         $user->save();
