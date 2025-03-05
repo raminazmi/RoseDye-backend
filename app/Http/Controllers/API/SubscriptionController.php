@@ -175,7 +175,6 @@ class SubscriptionController extends Controller
                 'margin_bottom' => 20,
                 'margin_left' => 15,
                 'margin_right' => 15,
-                'default_font' => 'almarai',
             ]);
 
             $html = view('exports.subscriptions', [
