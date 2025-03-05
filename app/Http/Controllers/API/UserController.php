@@ -82,14 +82,14 @@ class UserController extends Controller
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|string|max:255',
             'email' => 'sometimes|email|unique:users,email,' . auth()->id(),
-            'phone' => 'sometimes|string|max:20',
+            'phone' => 'nullable|string|max:20',
+            'password' => 'sometimes|min:8|confirmed',
             'bio' => 'nullable|string|max:500',
             'facebook' => 'nullable|url|max:255',
             'twitter' => 'nullable|url|max:255',
             'linkedin' => 'nullable|url|max:255',
             'instagram' => 'nullable|url|max:255',
             'github' => 'nullable|url|max:255',
-            'password' => 'nullable|min:8|confirmed',
         ]);
 
         if ($validator->fails()) {
