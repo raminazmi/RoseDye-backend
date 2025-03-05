@@ -104,7 +104,6 @@ class UserController extends Controller
             'name',
             'email',
             'phone',
-            'password',
             'bio',
             'facebook',
             'twitter',
