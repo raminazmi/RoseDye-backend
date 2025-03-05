@@ -104,6 +104,7 @@ class UserController extends Controller
             'name',
             'email',
             'phone',
+            'password',
             'bio',
             'facebook',
             'twitter',
@@ -120,7 +121,7 @@ class UserController extends Controller
         return response()->json([
             'status' => true,
             'message' => 'تم تحديث الملف الشخصي بنجاح',
-            'user' => $user->makeHidden('password'),
+            'user' => $user,
         ]);
     }
 }
