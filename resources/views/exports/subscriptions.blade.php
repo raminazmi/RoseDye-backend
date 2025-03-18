@@ -84,7 +84,7 @@
             background: #2A5C82;
             color: white;
             font-weight: 700;
-            font-size: 18px;
+            font-size: 0.80rem;
             letter-spacing: 0.5px;
         }
 
