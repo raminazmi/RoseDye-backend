@@ -39,9 +39,12 @@ Route::prefix('v1')->group(function () {
         Route::post('/invoices/{invoice}/download', [InvoiceController::class, 'download']);
         Route::get('/invoices/{invoice}/download', [InvoiceController::class, 'download']);
 
+        // Subscriptions
         Route::apiResource('subscriptions', SubscriptionController::class);
         Route::post('subscriptions/{subscription}/notify', [SubscriptionController::class, 'sendNotification']);
         Route::get('/subscriptions/{id}', [SubscriptionController::class, 'show']);
+        Route::patch('/subscriptions/{subscription}/status', [SubscriptionController::class, 'updateStatus']); // المسار الجديد
+        Route::post('subscriptions/{subscription}/renew', [SubscriptionController::class, 'renew']);
 
         // Statistics
         Route::get('/statistics', [StatisticsController::class, 'index']);

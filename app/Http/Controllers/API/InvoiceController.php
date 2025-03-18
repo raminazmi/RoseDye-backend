@@ -4,8 +4,9 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\Invoice;
-use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Http\Request;
+use Carbon\Carbon;
 
 class InvoiceController extends Controller
 {
@@ -38,10 +39,8 @@ class InvoiceController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'client_id' => 'required|exists:clients,id',
-            'issue_date' => 'required|date',
-            'due_date' => 'required|date|after:issue_date',
+            'date' => 'required|date',
             'amount' => 'required|numeric',
-            'description' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
@@ -60,60 +59,75 @@ class InvoiceController extends Controller
                 ], 401);
             }
 
-            $maxInvoiceNumber = Invoice::where('user_id', $userId)
-                ->max('invoice_number');
-
-            if (!$maxInvoiceNumber) {
-                $nextNumber = 1;
-            } else {
-                $numericPart = (int)substr($maxInvoiceNumber, -5);
-                $nextNumber = $numericPart + 1;
-            }
-
-            $invoiceNumber = str_pad($nextNumber, 5, '0', STR_PAD_LEFT);
-
-            while (Invoice::where('invoice_number', $invoiceNumber)->exists()) {
-                $nextNumber++;
-                $invoiceNumber = str_pad($nextNumber, 5, '0', STR_PAD_LEFT);
-            }
+            $lastInvoice = Invoice::orderBy('invoice_number', 'desc')->first();
+            $nextNumber = $lastInvoice ? ((int)$lastInvoice->invoice_number + 1) : 1;
+            $invoiceNumber = (string)$nextNumber;
 
             $invoice = Invoice::create([
                 'user_id' => $userId,
                 'client_id' => $request->client_id,
                 'invoice_number' => $invoiceNumber,
-                'issue_date' => $request->issue_date,
-                'due_date' => $request->due_date,
+                'date' => $request->date,
                 'amount' => $request->amount,
-                'description' => $request->description,
-                'status' => 'unpaid',
             ]);
+
+            $client = $invoice->client;
+
+            $invoicesCount = $client->invoices()->count();
+            if ($invoicesCount == 1) {
+                $client->current_balance -= $request->amount;
+                $client->current_balance += 15;
+            } else {
+                $client->current_balance -= $request->amount;
+            }
+            $client->save();
+
+            $subscription = $client->subscriptions()->where('status', 'active')->first();
+            if ($subscription) {
+                $remaining = $client->current_balance;
+                $message = "تم إضافة فاتورة رقم {$invoice->invoice_number} للاشتراك رقم {$client->subscription_number} بقيمة {$request->amount} د.ك. المتبقي: {$remaining} د.ك. ينتهي اشتراكك في {$subscription->end_date}";
+                if ($invoicesCount == 1) {
+                    $message .= " كما تم إضافة مبلغ هدية من الموقع بقيمة 15 د.ك.";
+                }
+
+                $this->sendWhatsAppNotification($client->phone, $message);
+            }
 
             return response()->json([
                 'status' => true,
-                'data' => $invoice,
-                'message' => 'تم إضافة الفاتورة بنجاح'
+                'message' => 'تم إنشاء الفاتورة بنجاح',
+                'data' => $invoice
             ], 201);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => false,
-                'message' => 'حدث خطأ أثناء الحفظ: ' . $e->getMessage()
+                'message' => 'حدث خطأ أثناء إنشاء الفاتورة: ' . $e->getMessage()
             ], 500);
         }
     }
 
-    public function show($id)
+    // دالة لإرسال تنبيه WhatsApp
+    private function sendWhatsAppNotification($phone, $message)
     {
         try {
-            $invoice = Invoice::with('client')->where('user_id', auth()->id())->findOrFail($id);
-            return response()->json([
-                'status' => true,
-                'data' => $invoice
+            $client = new \GuzzleHttp\Client();
+            $token = env('ULTRAMSG_TOKEN');
+            $url = 'https://api.ultramsg.com/instance60138/messages/chat?token=' . urlencode($token);
+
+            $response = $client->post($url, [
+                'form_params' => [
+                    'to' => $phone,
+                    'body' => $message,
+                ],
+                'headers' => ['Content-Type' => 'application/x-www-form-urlencoded'],
             ]);
+
+            $result = json_decode($response->getBody(), true);
+            if (!isset($result['sent']) || $result['sent'] !== 'true') {
+                throw new \Exception($result['error'] ?? 'خطأ غير محدد');
+            }
         } catch (\Exception $e) {
-            return response()->json([
-                'status' => false,
-                'message' => 'الفاتورة غير موجودة'
-            ], 404);
+            \Log::error('فشل إرسال WhatsApp: ' . $e->getMessage());
         }
     }
 
@@ -121,10 +135,8 @@ class InvoiceController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'client_id' => 'required|exists:clients,id',
-            'issue_date' => 'required|date',
-            'due_date' => 'required|date|after:issue_date',
+            'date' => 'required|date',
             'amount' => 'required|numeric',
-            'description' => 'nullable|string',
         ]);
 
         if ($validator->fails()) {
@@ -137,69 +149,50 @@ class InvoiceController extends Controller
         try {
             $invoice = Invoice::where('user_id', auth()->id())->findOrFail($id);
 
+            // تحديث رصيد العميل قبل التعديل
+            $oldAmount = $invoice->amount;
+            $client = $invoice->client;
+            $client->current_balance -= $oldAmount;
+
             $invoice->update([
                 'client_id' => $request->client_id,
-                'issue_date' => $request->issue_date,
-                'due_date' => $request->due_date,
+                'date' => $request->date,
                 'amount' => $request->amount,
-                'description' => $request->description,
             ]);
+
+            // تحديث الرصيد بعد التعديل
+            $client->current_balance += $request->amount;
+            $client->save();
 
             return response()->json([
                 'status' => true,
-                'data' => $invoice,
-                'message' => 'تم تعديل الفاتورة بنجاح'
+                'message' => 'تم تحديث الفاتورة بنجاح',
+                'data' => $invoice
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => false,
-                'message' => 'حدث خطأ أثناء التعديل: ' . $e->getMessage()
+                'message' => 'حدث خطأ أثناء تحديث الفاتورة: ' . $e->getMessage()
             ], 500);
         }
     }
 
-    public function updateStatus(Request $request, $id)
+    public function show($id)
     {
-        $validator = Validator::make($request->all(), [
-            'status' => 'required|in:paid,unpaid',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'status' => false,
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
         try {
-            $invoice = Invoice::where('user_id', auth()->id())->findOrFail($id);
-            $client = $invoice->client;
-
-            \DB::transaction(function () use ($invoice, $client, $request) {
-                $oldStatus = $invoice->status;
-                $newStatus = $request->status;
-
-                if ($oldStatus === 'paid' && $newStatus === 'unpaid') {
-                    $client->current_balance += $invoice->amount;
-                } elseif ($oldStatus === 'unpaid' && $newStatus === 'paid') {
-                    $client->current_balance -= $invoice->amount;
-                }
-                $client->save();
-                $invoice->update([
-                    'status' => $newStatus,
-                ]);
-            });
+            $invoice = Invoice::with('client')
+                ->where('user_id', auth()->id())
+                ->findOrFail($id);
 
             return response()->json([
                 'status' => true,
-                'data' => $invoice,
-                'message' => 'تم تحديث حالة الفاتورة بنجاح'
+                'data' => $invoice
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => false,
-                'message' => 'حدث خطأ أثناء تحديث الحالة: ' . $e->getMessage()
-            ], 500);
+                'message' => 'حدث خطأ أثناء جلب بيانات الفاتورة: ' . $e->getMessage()
+            ], 404);
         }
     }
 
@@ -207,6 +200,18 @@ class InvoiceController extends Controller
     {
         try {
             $invoice = Invoice::where('user_id', auth()->id())->findOrFail($id);
+            $client = $invoice->client;
+
+            $invoicesCount = $client->invoices()->count();
+
+            if ($invoicesCount == 1) {
+                $client->current_balance -= 15;
+                $client->current_balance += $invoice->amount;
+            } else {
+                $client->current_balance += $invoice->amount;
+            }
+
+            $client->save();
             $invoice->delete();
 
             return response()->json([

@@ -12,11 +12,11 @@ class Subscription extends Model
         'price',
         'start_date',
         'end_date',
-        'status'
+        'status',
     ];
 
     public function client()
     {
-        return $this->belongsTo(Client::class);
+        return $this->belongsTo(Client::class, 'client_id', 'id');
     }
 }

@@ -14,7 +14,6 @@ class ProcessOverdueInvoices extends Command
     public function handle()
     {
         $overdueInvoices = Invoice::where('due_date', '<=', now())
-            ->where('status', 'unpaid')
             ->where('is_processed', false)
             ->get();
 
@@ -29,7 +28,6 @@ class ProcessOverdueInvoices extends Command
 
                         $invoice->update([
                             'is_processed' => true,
-                            'status' => 'paid'
                         ]);
                     }
                 });

@@ -11,10 +11,7 @@ class Client extends Model
 
     protected $fillable = [
         'name',
-        'email',
         'phone',
-        'company_name',
-        'address',
         'current_balance',
         'renewal_balance',
         'subscription_number',
@@ -22,10 +19,16 @@ class Client extends Model
 
     public function invoices()
     {
-        return $this->hasMany(Invoice::class);
+        return $this->hasMany(Invoice::class, 'client_id', 'id');
     }
+
     public function subscriptions()
     {
-        return $this->hasMany(Subscription::class);
+        return $this->hasMany(Subscription::class, 'client_id', 'id');
+    }
+
+    public function user()
+    {
+        return $this->hasOne(User::class, 'phone', 'phone');
     }
 }

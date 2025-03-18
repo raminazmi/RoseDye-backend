@@ -13,41 +13,31 @@ class StatisticsController extends Controller
     {
         $previousMonth = Carbon::now()->subMonth();
 
-        // عدد العملاء
         $current_clients = Client::count();
         $previous_clients = Client::where('created_at', '<', $previousMonth)->count();
         $clients_rate = $previous_clients > 0 ? (($current_clients - $previous_clients) / $previous_clients * 100) : 0;
 
-        // عدد الاشتراكات النشطة
         $current_subscriptions = Subscription::where('status', 'active')->count();
         $previous_subscriptions = Subscription::where('status', 'active')->where('created_at', '<', $previousMonth)->count();
         $subscriptions_rate = $previous_subscriptions > 0 ? (($current_subscriptions - $previous_subscriptions) / $previous_subscriptions * 100) : 0;
 
-        // إجمالي الإيرادات
         $current_revenue = Invoice::sum('amount') ?? 0;
         $previous_revenue = Invoice::where('created_at', '<', $previousMonth)->sum('amount') ?? 0;
         $revenue_rate = $previous_revenue > 0 ? (($current_revenue - $previous_revenue) / $previous_revenue * 100) : 0;
 
-        // الفواتير المدفوعة وغير المدفوعة وإجمالي الفواتير
-        $current_paid_invoices = Invoice::where('status', 'paid')->count();
-        $current_unpaid_invoices = Invoice::where('status', 'unpaid')->count();
-        $total_invoices = $current_paid_invoices + $current_unpaid_invoices;
-
-        $previous_paid_invoices = Invoice::where('status', 'paid')->where('created_at', '<', $previousMonth)->count();
-        $previous_unpaid_invoices = Invoice::where('status', 'unpaid')->where('created_at', '<', $previousMonth)->count();
-        $previous_total_invoices = $previous_paid_invoices + $previous_unpaid_invoices;
-
-        $paid_invoices_rate = $previous_paid_invoices > 0 ? (($current_paid_invoices - $previous_paid_invoices) / $previous_paid_invoices * 100) : 0;
-        $unpaid_invoices_rate = $previous_unpaid_invoices > 0 ? (($current_unpaid_invoices - $previous_unpaid_invoices) / $previous_unpaid_invoices * 100) : 0;
+        $total_invoices = Invoice::count();
+        $previous_total_invoices = Invoice::where('created_at', '<', $previousMonth)->count();
         $total_invoices_rate = $previous_total_invoices > 0 ? (($total_invoices - $previous_total_invoices) / $previous_total_invoices * 100) : 0;
+
+        $active_subscriptions = Subscription::where('status', 'active')->count();
+        $expired_subscriptions = Subscription::where('status', 'expired')->count();
+        $canceled_subscriptions = Subscription::where('status', 'canceled')->count();
 
         return response()->json([
             'total_clients' => $current_clients,
             'active_subscriptions' => $current_subscriptions,
             'total_revenue' => $current_revenue,
             'total_invoices' => $total_invoices,
-            'paid_invoices' => $current_paid_invoices,
-            'unpaid_invoices' => $current_unpaid_invoices,
             'recent_clients' => Client::latest()->take(5)->get(),
             'upcoming_renewals' => Subscription::where('end_date', '>', now())
                 ->orderBy('end_date')
@@ -57,12 +47,12 @@ class StatisticsController extends Controller
             'subscriptions_rate' => number_format($subscriptions_rate, 2),
             'revenue_rate' => number_format($revenue_rate, 2),
             'total_invoices_rate' => number_format($total_invoices_rate, 2),
-            'paid_invoices_rate' => number_format($paid_invoices_rate, 2),
-            'unpaid_invoices_rate' => number_format($unpaid_invoices_rate, 2),
+            'active_subscriptions' => $active_subscriptions,
+            'expired_subscriptions' => $expired_subscriptions,
+            'canceled_subscriptions' => $canceled_subscriptions,
         ]);
     }
 
-    // إحصائيات يومية
     public function daily()
     {
         $today = Carbon::today();
@@ -86,7 +76,6 @@ class StatisticsController extends Controller
         ]);
     }
 
-    // إحصائيات أسبوعية
     public function weekly()
     {
         $startOfWeek = Carbon::now()->startOfWeek();
@@ -96,7 +85,7 @@ class StatisticsController extends Controller
 
         for ($i = 0; $i < 7; $i++) {
             $day = $startOfWeek->copy()->addDays($i);
-            $days[] = $day->locale('ar')->isoFormat('ddd'); // أسماء الأيام بالعربية
+            $days[] = $day->locale('ar')->isoFormat('ddd');
             $revenue[] = Invoice::whereDate('created_at', $day)->sum('amount') ?? 0;
             $invoices[] = Invoice::whereDate('created_at', $day)->count() ?? 0;
         }
@@ -128,7 +117,7 @@ class StatisticsController extends Controller
                     ->with('client.invoices')
                     ->get()
                     ->sum(function ($sub) {
-                        return $sub->client->invoices->where('status', 'paid')->sum('amount');
+                        return $sub->client->invoices->sum('amount');
                     });
                 $revenue[] = $dailyRevenue;
 
@@ -155,7 +144,6 @@ class StatisticsController extends Controller
         }
     }
 
-    // إحصائيات شهرية
     public function monthly()
     {
         if (!auth('sanctum')->check()) {

@@ -9,14 +9,15 @@ use Illuminate\Support\Facades\Validator;
 use App\Models\Subscription;
 use App\Models\User;
 use Illuminate\Support\Facades\Hash;
+use Carbon\Carbon;
 
 class ClientController extends Controller
 {
     public function index(Request $request)
     {
         try {
-            $perPage = $request->input('per_page', 5); // العدد الافتراضي لكل صفحة
-            $page = $request->input('page', 1); // الصفحة الافتراضية
+            $perPage = $request->input('per_page', 5);
+            $page = $request->input('page', 1);
 
             $clients = Client::paginate($perPage, ['*'], 'page', $page);
 
@@ -34,16 +35,15 @@ class ClientController extends Controller
             ], 500);
         }
     }
+
     public function store(Request $request)
     {
         $validator = Validator::make($request->all(), [
             'name' => 'required|string|max:255',
-            'email' => 'required|email|unique:clients',
             'phone' => 'required|string|unique:clients',
-            'company_name' => 'nullable|string',
-            'address' => 'nullable|string',
             'current_balance' => 'required|numeric',
             'renewal_balance' => 'required|numeric',
+            'start_date' => 'required|date',
         ]);
 
         if ($validator->fails()) {
@@ -54,35 +54,35 @@ class ClientController extends Controller
         }
 
         try {
-            $maxSubscriptionNumber = Client::max('subscription_number');
-            $nextNumber = $maxSubscriptionNumber ? (int)substr($maxSubscriptionNumber, -5) + 1 : 1;
-            $subscriptionNumber = str_pad($nextNumber, 5, '0', STR_PAD_LEFT);
+            $lastClient = Client::orderBy('subscription_number', 'desc')->first();
+            $nextNumber = $lastClient ? ((int)$lastClient->subscription_number + 1) : 1;
+            $subscriptionNumber = (string)$nextNumber;
 
             $client = Client::create([
                 'name' => $request->name,
-                'email' => $request->email,
                 'phone' => $request->phone,
-                'company_name' => $request->company_name,
-                'address' => $request->address,
                 'current_balance' => $request->current_balance,
                 'renewal_balance' => $request->renewal_balance,
                 'subscription_number' => $subscriptionNumber,
             ]);
 
+            $startDate = Carbon::parse($request->start_date);
+            $endDate = $startDate->copy()->addMonths(2);
+
             Subscription::create([
                 'client_id' => $client->id,
                 'plan_name' => 'Default Plan',
                 'price' => 0,
-                'start_date' => now(),
-                'end_date' => now()->addYear(),
+                'start_date' => $startDate,
+                'end_date' => $endDate,
                 'status' => 'active'
             ]);
 
             User::create([
                 'name' => $request->name,
-                'email' => $request->email,
                 'phone' => $request->phone,
-                'password' => Hash::make('123456'), // يبقى في جدول users للتوثيق العام
+                'email' => $request->phone . '@example.com',
+                'password' => Hash::make('123456'),
                 'role' => 'user'
             ]);
 
@@ -116,12 +116,10 @@ class ClientController extends Controller
     {
         $validator = Validator::make($request->all(), [
             'name' => 'sometimes|string|max:255',
-            'email' => 'sometimes|email|unique:clients,email,' . $client->id,
             'phone' => 'sometimes|string|unique:clients,phone,' . $client->id,
-            'company_name' => 'nullable|string',
-            'address' => 'nullable|string',
             'current_balance' => 'sometimes|numeric',
             'renewal_balance' => 'sometimes|numeric',
+            'start_date' => 'sometimes|date',
         ]);
 
         if ($validator->fails()) {
@@ -132,7 +130,25 @@ class ClientController extends Controller
         }
 
         try {
-            $client->update($request->all());
+            $client->update([
+                'name' => $request->input('name', $client->name),
+                'phone' => $request->input('phone', $client->phone),
+                'current_balance' => $request->input('current_balance', $client->current_balance),
+                'renewal_balance' => $request->input('renewal_balance', $client->renewal_balance),
+            ]);
+
+            if ($request->has('start_date')) {
+                $startDate = Carbon::parse($request->start_date);
+                $endDate = $startDate->copy()->addMonths(2);
+
+                $subscription = $client->subscriptions()->where('status', 'active')->first();
+                if ($subscription) {
+                    $subscription->update([
+                        'start_date' => $startDate,
+                        'end_date' => $endDate,
+                    ]);
+                }
+            }
 
             return response()->json([
                 'status' => true,
@@ -142,7 +158,7 @@ class ClientController extends Controller
         } catch (\Exception $e) {
             return response()->json([
                 'status' => false,
-                'message' => 'حدث خطأ أثناء التحديث'
+                'message' => 'حدث خطأ أثناء التحديث: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -152,11 +168,15 @@ class ClientController extends Controller
         try {
             $client = Client::findOrFail($id);
             $client->subscriptions()->delete();
+            $user = $client->user;
+            if ($user) {
+                $user->delete();
+            }
             $client->delete();
 
             return response()->json([
                 'status' => true,
-                'message' => 'تم حذف العميل وجميع الاشتراكات المرتبطة به بنجاح'
+                'message' => 'تم حذف العميل والاشتراكات والمستخدم المرتبط به بنجاح'
             ]);
         } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
             return response()->json([
@@ -169,18 +189,5 @@ class ClientController extends Controller
                 'message' => 'حدث خطأ أثناء الحذف: ' . $e->getMessage()
             ], 500);
         }
-    }
-
-    public function getClientByEmail(Request $request)
-    {
-        $request->validate(['email' => 'required|email|exists:clients,email']);
-
-        $client = Client::where('email', $request->email)->firstOrFail();
-
-        return response()->json([
-            'status' => true,
-            'data' => $client,
-            'message' => 'تم جلب بيانات العميل بنجاح'
-        ]);
     }
 }

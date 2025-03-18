@@ -6,23 +6,17 @@ use Illuminate\Support\Facades\Schema;
 
 return new class extends Migration
 {
-    /**
-     * Run the migrations.
-     */
     public function up()
     {
         Schema::table('invoices', function (Blueprint $table) {
-            $table->boolean('is_processed')->default(false)->after('status');
+            $table->boolean('is_processed')->default(false);
         });
     }
 
-    /**
-     * Reverse the migrations.
-     */
     public function down(): void
     {
         Schema::table('invoices', function (Blueprint $table) {
-            //
+            $table->dropColumn('is_processed');
         });
     }
 };

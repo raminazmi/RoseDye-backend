@@ -14,28 +14,38 @@ class AuthController extends Controller
 {
     public function clientLogin(Request $request)
     {
-        $request->validate([
-            'phone' => 'required|string|exists:clients,phone',
-        ]);
+        try {
+            $validatedData = $request->validate([
+                'phone' => 'required|string|exists:clients,phone',
+            ], [
+                'phone.required' => 'رقم الهاتف مطلوب',
+                'phone.string' => 'يجب أن يكون رقم الهاتف نصًا',
+                'phone.exists' => 'رقم الهاتف غير مسجل',
+            ]);
 
-        $client = Client::where('phone', $request->phone)->first();
+            $client = Client::where('phone', $request->phone)->first();
 
-        if (!$client) {
+            if (!$client) {
+                return response()->json([
+                    'message' => 'رقم الهاتف غير مسجل'
+                ], 404);
+            }
+            $user = User::where('email', $client->email)->firstOrFail();
+            $tempToken = $user->createToken('temp_auth_token', ['otp-pending'])->plainTextToken;
+            $this->sendVerificationCode($client->phone);
+
             return response()->json([
-                'message' => 'رقم الهاتف غير مسجل'
-            ], 401);
+                'client' => $client,
+                'temp_token' => $tempToken,
+                'token_type' => 'Bearer',
+                'message' => 'تم إرسال رمز التحقق إلى هاتفك'
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'message' => 'فشل التحقق من الصحة',
+                'errors' => $e->errors(),
+            ], 422);
         }
-
-        $user = User::where('email', $client->email)->firstOrFail();
-        $tempToken = $user->createToken('temp_auth_token', ['otp-pending'])->plainTextToken;
-        $this->sendVerificationCode($client->phone);
-
-        return response()->json([
-            'client' => $client,
-            'temp_token' => $tempToken,
-            'token_type' => 'Bearer',
-            'message' => 'تم إرسال رمز التحقق إلى هاتفك'
-        ]);
     }
 
     protected function sendVerificationCode($phone)
@@ -85,34 +95,49 @@ class AuthController extends Controller
 
     public function verifyOtp(Request $request)
     {
-        $request->validate([
-            'phone' => 'required|string',
-            'otp' => 'required|string',
-            'temp_token' => 'required|string',
-        ]);
+        try {
+            $validatedData = $request->validate([
+                'phone' => 'required|string',
+                'otp' => 'required|string|digits:4',
+                'temp_token' => 'required|string',
+            ], [
+                'phone.required' => 'رقم الهاتف مطلوب',
+                'phone.string' => 'يجب أن يكون رقم الهاتف نصًا',
+                'otp.required' => 'رمز التحقق مطلوب',
+                'otp.string' => 'يجب أن يكون رمز التحقق نصًا',
+                'otp.digits' => 'يجب أن يتكون رمز التحقق من 4 أرقام',
+                'temp_token.required' => 'الرمز المؤقت مطلوب',
+                'temp_token.string' => 'يجب أن يكون الرمز المؤقت نصًا',
+            ]);
 
-        $client = Client::where('phone', $request->phone)->first();
+            $client = Client::where('phone', $request->phone)->first();
 
-        if (!$client) {
-            return response()->json(['message' => 'العميل غير موجود'], 404);
+            if (!$client) {
+                return response()->json(['message' => 'العميل غير موجود'], 404);
+            }
+
+            $storedOtp = Cache::get('otp_' . $request->phone);
+            if (!$storedOtp || $storedOtp !== $request->otp) {
+                return response()->json(['message' => 'رمز التحقق غير صحيح'], 400);
+            }
+
+            $user = User::where('email', $client->email)->firstOrFail();
+            $fullToken = $user->createToken('auth_token')->plainTextToken;
+            Cache::forget('otp_' . $request->phone);
+
+            return response()->json([
+                'access_token' => $fullToken,
+                'client_id' => $client->id,
+                'client' => $client,
+                'token_type' => 'Bearer',
+                'message' => 'تم تسجيل الدخول بنجاح'
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'message' => 'فشل التحقق من الصحة',
+                'errors' => $e->errors(),
+            ], 422);
         }
-
-        $storedOtp = Cache::get('otp_' . $request->phone);
-        if (!$storedOtp || $storedOtp !== $request->otp) {
-            return response()->json(['message' => 'رمز التحقق غير صحيح'], 400);
-        }
-
-        $user = User::where('email', $client->email)->firstOrFail();
-        $fullToken = $user->createToken('auth_token')->plainTextToken;
-        Cache::forget('otp_' . $request->phone);
-
-        return response()->json([
-            'access_token' => $fullToken,
-            'client_id' => $client->id,
-            'client' => $client,
-            'token_type' => 'Bearer',
-            'message' => 'تم تسجيل الدخول بنجاح'
-        ]);
     }
 
     public function register(Request $request)
@@ -141,24 +166,47 @@ class AuthController extends Controller
 
     public function login(Request $request)
     {
-        \Log::info('Login attempt with email: ' . $request->email);
+        try {
+            $validatedData = $request->validate([
+                'email' => 'required|string|email',
+                'password' => 'required|string|min:8',
+            ], [
+                'email.required' => 'البريد الإلكتروني مطلوب',
+                'email.string' => 'يجب أن يكون البريد الإلكتروني نصًا',
+                'email.email' => 'صيغة البريد الإلكتروني غير صالحة',
+                'email.unique' => 'البريد الإلكتروني مسجل مسبقًا',
+                'password.required' => 'كلمة المرور مطلوبة',
+                'password.string' => 'يجب أن تكون كلمة المرور نصًا',
+                'password.min' => 'يجب أن تحتوي كلمة المرور على 8 أحرف على الأقل',
+            ]);
 
-        if (!Auth::attempt($request->only('email', 'password'))) {
-            \Log::warning('Login failed for email: ' . $request->email);
+            $user = User::where('email', $request->email)->first();
+
+            if (!$user) {
+                return response()->json([
+                    'message' => 'البريد الإلكتروني غير مسجل'
+                ], 404);
+            }
+
+            if (!Auth::attempt($request->only('email', 'password'))) {
+                return response()->json([
+                    'message' => 'كلمة المرور غير صحيحة'
+                ], 401);
+            }
+
+            $token = $user->createToken('auth_token')->plainTextToken;
+
             return response()->json([
-                'message' => 'Invalid login details'
-            ], 401);
+                'user' => $user,
+                'access_token' => $token,
+                'token_type' => 'Bearer',
+            ]);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'message' => 'فشل التحقق من الصحة',
+                'errors' => $e->errors(),
+            ], 422);
         }
-
-        $user = User::where('email', $request->email)->firstOrFail();
-        \Log::info('Login successful for user: ' . $user->email);
-        $token = $user->createToken('auth_token')->plainTextToken;
-
-        return response()->json([
-            'user' => $user,
-            'access_token' => $token,
-            'token_type' => 'Bearer',
-        ]);
     }
 
     public function logout(Request $request)

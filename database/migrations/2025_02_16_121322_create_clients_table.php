@@ -11,13 +11,10 @@ return new class extends Migration
         Schema::create('clients', function (Blueprint $table) {
             $table->id();
             $table->string('name');
-            $table->string('email')->unique();
             $table->string('phone')->unique();
-            $table->string('company_name')->nullable();
-            $table->text('address')->nullable();
             $table->decimal('current_balance', 10, 2);
             $table->decimal('renewal_balance', 10, 2);
-            $table->string('subscription_number')->unique();
+            $table->string('subscription_number', 20)->unique();
             $table->timestamps();
         });
     }

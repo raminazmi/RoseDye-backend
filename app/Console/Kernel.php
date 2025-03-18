@@ -23,6 +23,7 @@ class Kernel extends ConsoleKernel
         })->daily();
         $schedule->command('invoices:process-overdue')
             ->everySecond();
+        $schedule->command('subscriptions:check')->everySecond();
     }
 
     /**

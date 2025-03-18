@@ -12,12 +12,9 @@ return new class extends Migration
             $table->id();
             $table->foreignId('user_id')->constrained()->onDelete('cascade');
             $table->foreignId('client_id')->constrained()->onDelete('cascade');
-            $table->string('invoice_number', 5)->unique();
-            $table->date('issue_date');
-            $table->date('due_date');
+            $table->string('invoice_number', 20)->unique();
+            $table->date('date');
             $table->decimal('amount', 10, 2);
-            $table->string('status')->default('unpaid');
-            $table->text('description')->nullable();
             $table->timestamps();
         });
     }

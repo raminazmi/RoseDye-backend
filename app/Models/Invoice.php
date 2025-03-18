@@ -10,17 +10,12 @@ class Invoice extends Model
         'user_id',
         'client_id',
         'invoice_number',
-        'issue_date',
-        'due_date',
+        'date',
         'amount',
-        'status',
-        'description',
-        'is_processed'
     ];
 
     protected $casts = [
-        'issue_date' => 'date',
-        'due_date' => 'date',
+        'date' => 'date',
         'created_at' => 'datetime',
         'updated_at' => 'datetime',
     ];
