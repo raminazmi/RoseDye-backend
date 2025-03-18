@@ -23,14 +23,8 @@ class AuthController extends Controller
                 'phone.exists' => 'رقم الهاتف غير مسجل',
             ]);
 
-            $client = Client::where('phone', $request->phone)->first();
-
-            if (!$client) {
-                return response()->json([
-                    'message' => 'رقم الهاتف غير مسجل'
-                ], 404);
-            }
-            $user = User::where('email', $client->email)->firstOrFail();
+            $client = Client::where('phone', $request->phone)->firstOrFail();
+            $user = User::where('phone', $client->phone)->firstOrFail();
             $tempToken = $user->createToken('temp_auth_token', ['otp-pending'])->plainTextToken;
             $this->sendVerificationCode($client->phone);
 
@@ -45,6 +39,14 @@ class AuthController extends Controller
                 'message' => 'فشل التحقق من الصحة',
                 'errors' => $e->errors(),
             ], 422);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            return response()->json([
+                'message' => 'رقم الهاتف غير مسجل'
+            ], 404);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'حدث خطأ: ' . $e->getMessage()
+            ], 500);
         }
     }
 
@@ -121,7 +123,7 @@ class AuthController extends Controller
                 return response()->json(['message' => 'رمز التحقق غير صحيح'], 400);
             }
 
-            $user = User::where('email', $client->email)->firstOrFail();
+            $user = User::where('phone', $client->phone)->firstOrFail();
             $fullToken = $user->createToken('auth_token')->plainTextToken;
             Cache::forget('otp_' . $request->phone);
 
