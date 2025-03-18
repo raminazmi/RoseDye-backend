@@ -193,7 +193,6 @@
                         {{ number_format($sub['total_due'] ?? 0, 3) }} د.ك
                     </span>
                 </td>
-                <td>{{ $sub['client_phone'] ?? '--' }}</td>
                 <td>{{ number_format($sub['total_inv'] ?? 0, 3) }} د.ك</td>
                 <td>
                     @php
@@ -201,6 +200,7 @@
                     echo $date->format('d-m-Y');
                     @endphp
                 </td>
+                <td>{{ $sub['client_phone'] ?? '--' }}</td>
                 <td>{{ $sub['invoices_count'] ?? 0 }}</td>
                 <td>{{ $sub['subscription_number'] ?? '--' }}</td>
             </tr>
