@@ -142,6 +142,35 @@ class AuthController extends Controller
         }
     }
 
+    public function verifyTempToken(Request $request)
+    {
+        try {
+            $validatedData = $request->validate([
+                'temp_token' => 'required|string',
+            ]);
+            $token = \Laravel\Sanctum\PersonalAccessToken::findToken($request->temp_token);
+
+            if (!$token || $token->name !== 'temp_auth_token' || !$token->tokenable) {
+                return response()->json(['message' => 'الرمز المؤقت غير صحيح أو منتهي الصلاحية'], 401);
+            }
+            $user = $token->tokenable;
+            if (!$user || !$user->exists) {
+                return response()->json(['message' => 'المستخدم غير موجود'], 404);
+            }
+
+            return response()->json(['message' => 'الرمز المؤقت صحيح', 'user' => $user], 200);
+        } catch (\Illuminate\Validation\ValidationException $e) {
+            return response()->json([
+                'message' => 'فشل التحقق من الصحة',
+                'errors' => $e->errors(),
+            ], 422);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'حدث خطأ: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
     public function register(Request $request)
     {
         $request->validate([

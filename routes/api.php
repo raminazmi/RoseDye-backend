@@ -20,6 +20,7 @@ Route::prefix('v1')->group(function () {
     Route::post('/verify-phone', [VerificationController::class, 'sendCode']);
     Route::post('/confirm-verification', [VerificationController::class, 'verifyCode']);
     Route::post('/verify-otp', [AuthController::class, 'verifyOtp']);
+    Route::post('/verify-temp-token', [AuthController::class, 'verifyTempToken']);
     Route::post('/resend-otp', [AuthController::class, 'resendVerificationCode']);
 
     // Protected Routes
