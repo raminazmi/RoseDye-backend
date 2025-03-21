@@ -41,6 +41,13 @@ class InvoiceController extends Controller
             'client_id' => 'required|exists:clients,id',
             'date' => 'required|date',
             'amount' => 'required|numeric',
+        ], [
+            'client_id.required' => 'حقل معرف العميل مطلوب.',
+            'client_id.exists' => 'حقل معرف العميل غير موجود في قاعدة البيانات.',
+            'date.required' => 'حقل التاريخ مطلوب.',
+            'date.date' => 'حقل التاريخ يجب أن يكون تاريخًا صحيحًا.',
+            'amount.required' => 'حقل المبلغ مطلوب.',
+            'amount.numeric' => 'حقل المبلغ يجب أن يكون رقمًا.',
         ]);
 
         if ($validator->fails()) {
@@ -59,9 +66,22 @@ class InvoiceController extends Controller
                 ], 401);
             }
 
-            $lastInvoice = Invoice::orderBy('invoice_number', 'desc')->first();
-            $nextNumber = $lastInvoice ? ((int)$lastInvoice->invoice_number + 1) : 1;
-            $invoiceNumber = (string)$nextNumber;
+            $maxInvoiceNumber = Invoice::where('user_id', $userId)
+                ->max('invoice_number');
+
+            if (!$maxInvoiceNumber) {
+                $nextNumber = 1;
+            } else {
+                $numericPart = (int)substr($maxInvoiceNumber, -5);
+                $nextNumber = $numericPart + 1;
+            }
+
+            $invoiceNumber = str_pad($nextNumber, 5, '0', STR_PAD_LEFT);
+
+            while (Invoice::where('invoice_number', $invoiceNumber)->exists()) {
+                $nextNumber++;
+                $invoiceNumber = str_pad($nextNumber, 5, '0', STR_PAD_LEFT);
+            }
 
             $invoice = Invoice::create([
                 'user_id' => $userId,
@@ -74,22 +94,25 @@ class InvoiceController extends Controller
             $client = $invoice->client;
 
             $invoicesCount = $client->invoices()->count();
-            if ($invoicesCount == 1) {
-                $client->current_balance -= $request->amount;
-                $client->current_balance += 15;
-            } else {
-                $client->current_balance -= $request->amount;
+            $giftAmount = $client->additional_gift ?? 0; // جلب قيمة الهدية من الـ Backend
+
+            if ($invoicesCount == 1 && $giftAmount > 0) {
+                // إضافة الهدية إلى الرصيد الحالي إذا كانت الفاتورة الأولى
+                $client->current_balance += $giftAmount;
             }
+
+            // خصم مبلغ الفاتورة من الرصيد الحالي
+            $client->current_balance -= $request->amount;
+
             $client->save();
 
             $subscription = $client->subscriptions()->where('status', 'active')->first();
             if ($subscription) {
                 $remaining = $client->current_balance;
                 $message = "تم إضافة فاتورة رقم {$invoice->invoice_number} للاشتراك رقم {$client->subscription_number} بقيمة {$request->amount} د.ك. المتبقي: {$remaining} د.ك. ينتهي اشتراكك في {$subscription->end_date}";
-                if ($invoicesCount == 1) {
-                    $message .= " كما تم إضافة مبلغ هدية من الموقع بقيمة 15 د.ك.";
+                if ($invoicesCount == 1 && $giftAmount > 0) {
+                    $message .= " كما تم إضافة مبلغ هدية من الموقع بقيمة {$giftAmount} د.ك.";
                 }
-
                 $this->sendWhatsAppNotification($client->phone, $message);
             }
 
@@ -106,7 +129,6 @@ class InvoiceController extends Controller
         }
     }
 
-    // دالة لإرسال تنبيه WhatsApp
     private function sendWhatsAppNotification($phone, $message)
     {
         try {
@@ -137,6 +159,13 @@ class InvoiceController extends Controller
             'client_id' => 'required|exists:clients,id',
             'date' => 'required|date',
             'amount' => 'required|numeric',
+        ], [
+            'client_id.required' => 'حقل معرف العميل مطلوب.',
+            'client_id.exists' => 'حقل معرف العميل غير موجود في قاعدة البيانات.',
+            'date.required' => 'حقل التاريخ مطلوب.',
+            'date.date' => 'حقل التاريخ يجب أن يكون تاريخًا صحيحًا.',
+            'amount.required' => 'حقل المبلغ مطلوب.',
+            'amount.numeric' => 'حقل المبلغ يجب أن يكون رقمًا.',
         ]);
 
         if ($validator->fails()) {
@@ -149,10 +178,11 @@ class InvoiceController extends Controller
         try {
             $invoice = Invoice::where('user_id', auth()->id())->findOrFail($id);
 
-            // تحديث رصيد العميل قبل التعديل
             $oldAmount = $invoice->amount;
             $client = $invoice->client;
-            $client->current_balance -= $oldAmount;
+
+            $client->current_balance += $oldAmount;
+            $client->current_balance -= $request->amount;
 
             $invoice->update([
                 'client_id' => $request->client_id,
@@ -160,8 +190,6 @@ class InvoiceController extends Controller
                 'amount' => $request->amount,
             ]);
 
-            // تحديث الرصيد بعد التعديل
-            $client->current_balance += $request->amount;
             $client->save();
 
             return response()->json([
@@ -203,13 +231,12 @@ class InvoiceController extends Controller
             $client = $invoice->client;
 
             $invoicesCount = $client->invoices()->count();
+            $giftAmount = $client->additional_gift ?? 0;
 
-            if ($invoicesCount == 1) {
-                $client->current_balance -= 15;
-                $client->current_balance += $invoice->amount;
-            } else {
-                $client->current_balance += $invoice->amount;
+            if ($invoicesCount == 1 && $giftAmount > 0) {
+                $client->current_balance -= $giftAmount;
             }
+            $client->current_balance += $invoice->amount;
 
             $client->save();
             $invoice->delete();

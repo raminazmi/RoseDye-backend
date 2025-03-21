@@ -19,7 +19,9 @@ class ClientController extends Controller
             $perPage = $request->input('per_page', 5);
             $page = $request->input('page', 1);
 
-            $clients = Client::paginate($perPage, ['*'], 'page', $page);
+            $clients = Client::with(['subscriptions' => function ($query) {
+                $query->where('status', 'active')->latest();
+            }])->paginate($perPage, ['*'], 'page', $page);
 
             return response()->json([
                 'status' => true,
@@ -36,14 +38,41 @@ class ClientController extends Controller
         }
     }
 
+    public function show(Client $client)
+    {
+        return response()->json([
+            'status' => true,
+            'data' => $client
+        ]);
+    }
+
     public function store(Request $request)
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'required|string|max:255',
             'phone' => 'required|string|unique:clients',
             'current_balance' => 'required|numeric',
             'renewal_balance' => 'required|numeric',
             'start_date' => 'required|date',
+            'end_date' => 'required|date|after:start_date',
+            'subscription_number' => 'required|string|unique:clients',
+            'additional_gift' => 'nullable|numeric', // إضافة التحقق من حقل الهدية
+        ], [
+            'phone.required' => 'حقل رقم الهاتف مطلوب.',
+            'phone.string' => 'حقل رقم الهاتف يجب أن يكون نصًا.',
+            'phone.unique' => 'حقل رقم الهاتف مُستخدم مسبقًا.',
+            'current_balance.required' => 'حقل الرصيد الحالي مطلوب.',
+            'current_balance.numeric' => 'حقل الرصيد الحالي يجب أن يكون رقمًا.',
+            'renewal_balance.required' => 'حقل رصيد التجديد مطلوب.',
+            'renewal_balance.numeric' => 'حقل رصيد التجديد يجب أن يكون رقمًا.',
+            'start_date.required' => 'حقل تاريخ البداية مطلوب.',
+            'start_date.date' => 'حقل تاريخ البداية يجب أن يكون تاريخًا صحيحًا.',
+            'end_date.required' => 'حقل تاريخ النهاية مطلوب.',
+            'end_date.date' => 'حقل تاريخ النهاية يجب أن يكون تاريخًا صحيحًا.',
+            'end_date.after' => 'حقل تاريخ النهاية يجب أن يكون تاريخًا بعد تاريخ البداية.',
+            'subscription_number.required' => 'حقل رقم الاشتراك مطلوب.',
+            'subscription_number.string' => 'حقل رقم الاشتراك يجب أن يكون نصًا.',
+            'subscription_number.unique' => 'حقل رقم الاشتراك مُستخدم مسبقًا.',
+            'additional_gift.numeric' => 'حقل الهدية الإضافية يجب أن يكون رقمًا.',
         ]);
 
         if ($validator->fails()) {
@@ -54,32 +83,25 @@ class ClientController extends Controller
         }
 
         try {
-            $lastClient = Client::orderBy('subscription_number', 'desc')->first();
-            $nextNumber = $lastClient ? ((int)$lastClient->subscription_number + 1) : 1;
-            $subscriptionNumber = (string)$nextNumber;
-
             $client = Client::create([
-                'name' => $request->name,
                 'phone' => $request->phone,
                 'current_balance' => $request->current_balance,
                 'renewal_balance' => $request->renewal_balance,
-                'subscription_number' => $subscriptionNumber,
+                'subscription_number' => $request->subscription_number,
+                'additional_gift' => $request->additional_gift ?? 0, // حفظ الهدية (0 إذا لم يتم إدخال قيمة)
             ]);
-
-            $startDate = Carbon::parse($request->start_date);
-            $endDate = $startDate->copy()->addMonths(2);
 
             Subscription::create([
                 'client_id' => $client->id,
                 'plan_name' => 'Default Plan',
                 'price' => 0,
-                'start_date' => $startDate,
-                'end_date' => $endDate,
+                'start_date' => $request->start_date,
+                'end_date' => $request->end_date,
                 'status' => 'active'
             ]);
 
             User::create([
-                'name' => $request->name,
+                'name' => 'user' . $request->subscription_number,
                 'phone' => $request->phone,
                 'email' => $request->phone . '@example.com',
                 'password' => Hash::make('123456'),
@@ -94,32 +116,43 @@ class ClientController extends Controller
         } catch (\Illuminate\Database\QueryException $e) {
             return response()->json([
                 'status' => false,
-                'message' => 'خطأ في قاعدة البيانات: ' . $e->getMessage()
+                'message' => 'خطأ: رقم الاشتراك مكرر أو مشكلة في قاعدة البيانات'
             ], 500);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => false,
-                'message' => 'حدث خطأ أثناء الحفظ: ' . $e->getMessage()
+                'message' => 'حدث خطأ أثناء الحفظ'
             ], 500);
         }
-    }
-
-    public function show(Client $client)
-    {
-        return response()->json([
-            'status' => true,
-            'data' => $client
-        ]);
     }
 
     public function update(Request $request, Client $client)
     {
         $validator = Validator::make($request->all(), [
-            'name' => 'sometimes|string|max:255',
-            'phone' => 'sometimes|string|unique:clients,phone,' . $client->id,
-            'current_balance' => 'sometimes|numeric',
-            'renewal_balance' => 'sometimes|numeric',
-            'start_date' => 'sometimes|date',
+            'phone' => 'required|string|unique:clients,phone,' . $client->id,
+            'current_balance' => 'required|numeric',
+            'renewal_balance' => 'required|numeric',
+            'start_date' => 'required|date',
+            'end_date' => 'required|date|after:start_date',
+            'subscription_number' => 'required|string|unique:clients,subscription_number,' . $client->id,
+            'additional_gift' => 'nullable|numeric', // إضافة التحقق من حقل الهدية
+        ], [
+            'phone.required' => 'حقل رقم الهاتف مطلوب.',
+            'phone.string' => 'حقل رقم الهاتف يجب أن يكون نصًا.',
+            'phone.unique' => 'حقل رقم الهاتف مُستخدم مسبقًا.',
+            'current_balance.required' => 'حقل الرصيد الحالي مطلوب.',
+            'current_balance.numeric' => 'حقل الرصيد الحالي يجب أن يكون رقمًا.',
+            'renewal_balance.required' => 'حقل رصيد التجديد مطلوب.',
+            'renewal_balance.numeric' => 'حقل رصيد التجديد يجب أن يكون رقمًا.',
+            'start_date.required' => 'حقل تاريخ البداية مطلوب.',
+            'start_date.date' => 'حقل تاريخ البداية يجب أن يكون تاريخًا صحيحًا.',
+            'end_date.required' => 'حقل تاريخ النهاية مطلوب.',
+            'end_date.date' => 'حقل تاريخ النهاية يجب أن يكون تاريخًا صحيحًا.',
+            'end_date.after' => 'حقل تاريخ النهاية يجب أن يكون تاريخًا بعد تاريخ البداية.',
+            'subscription_number.required' => 'حقل رقم الاشتراك مطلوب.',
+            'subscription_number.string' => 'حقل رقم الاشتراك يجب أن يكون نصًا.',
+            'subscription_number.unique' => 'حقل رقم الاشتراك مُستخدم مسبقًا.',
+            'additional_gift.numeric' => 'حقل الهدية الإضافية يجب أن يكون رقمًا.',
         ]);
 
         if ($validator->fails()) {
@@ -131,15 +164,16 @@ class ClientController extends Controller
 
         try {
             $client->update([
-                'name' => $request->input('name', $client->name),
                 'phone' => $request->input('phone', $client->phone),
                 'current_balance' => $request->input('current_balance', $client->current_balance),
                 'renewal_balance' => $request->input('renewal_balance', $client->renewal_balance),
+                'subscription_number' => $request->input('subscription_number', $client->subscription_number),
+                'additional_gift' => $request->input('additional_gift', $client->additional_gift), // تحديث الهدية
             ]);
 
-            if ($request->has('start_date')) {
-                $startDate = Carbon::parse($request->start_date);
-                $endDate = $startDate->copy()->addMonths(2);
+            if ($request->has('start_date') || $request->has('end_date')) {
+                $startDate = $request->has('start_date') ? Carbon::parse($request->start_date) : $client->subscriptions()->where('status', 'active')->first()->start_date;
+                $endDate = $request->has('end_date') ? Carbon::parse($request->end_date) : $client->subscriptions()->where('status', 'active')->first()->end_date;
 
                 $subscription = $client->subscriptions()->where('status', 'active')->first();
                 if ($subscription) {

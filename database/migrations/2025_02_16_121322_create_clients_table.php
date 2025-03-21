@@ -10,10 +10,10 @@ return new class extends Migration
     {
         Schema::create('clients', function (Blueprint $table) {
             $table->id();
-            $table->string('name');
             $table->string('phone')->unique();
-            $table->decimal('current_balance', 10, 2);
-            $table->decimal('renewal_balance', 10, 2);
+            $table->integer('current_balance');
+            $table->integer('renewal_balance');
+            $table->integer('additional_gift')->nullable();
             $table->string('subscription_number', 20)->unique();
             $table->timestamps();
         });

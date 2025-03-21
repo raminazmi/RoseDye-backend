@@ -10,11 +10,11 @@ class Client extends Model
     use HasApiTokens;
 
     protected $fillable = [
-        'name',
         'phone',
         'current_balance',
         'renewal_balance',
         'subscription_number',
+        'additional_gift',
     ];
 
     public function invoices()
