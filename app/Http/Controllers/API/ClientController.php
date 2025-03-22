@@ -135,7 +135,7 @@ class ClientController extends Controller
             'start_date' => 'required|date',
             'end_date' => 'required|date|after:start_date',
             'subscription_number' => 'required|string|unique:clients,subscription_number,' . $client->id,
-            'additional_gift' => 'nullable|numeric', // إضافة التحقق من حقل الهدية
+            'additional_gift' => 'nullable|numeric',
         ], [
             'phone.required' => 'حقل رقم الهاتف مطلوب.',
             'phone.string' => 'حقل رقم الهاتف يجب أن يكون نصًا.',
