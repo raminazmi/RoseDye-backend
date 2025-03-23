@@ -12,5 +12,5 @@ while (true) {
             file_put_contents('scheduler.log', date('Y-m-d H:i:s') . " - Error executing subscriptions:notify-renewal\n", FILE_APPEND);
         }
     }
-    sleep(3600);
+    sleep(1);
 }
