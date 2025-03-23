@@ -92,10 +92,12 @@ class ClientController extends Controller
                 'additional_gift' => $request->additional_gift ?? 0,
             ]);
 
-
             $startDate = Carbon::parse($request->start_date);
             $endDate = Carbon::parse($request->end_date);
             $durationInDays = $startDate->diffInDays($endDate);
+
+            $currentDate = Carbon::today();
+            $status = $endDate->lessThan($currentDate) ? 'expired' : 'active';
 
             Subscription::create([
                 'client_id' => $client->id,
@@ -104,7 +106,7 @@ class ClientController extends Controller
                 'start_date' => $request->start_date,
                 'end_date' => $request->end_date,
                 'duration_in_days' => $durationInDays + 1,
-                'status' => 'active'
+                'status' => $status,
             ]);
 
             return response()->json([
@@ -166,17 +168,21 @@ class ClientController extends Controller
             ]);
 
             if ($request->has('start_date') || $request->has('end_date')) {
-                $startDate = $request->has('start_date') ? Carbon::parse($request->start_date) : $client->subscriptions()->where('status', 'active')->first()->start_date;
-                $endDate = $request->has('end_date') ? Carbon::parse($request->end_date) : $client->subscriptions()->where('status', 'active')->first()->end_date;
+                $startDate = $request->has('start_date') ? Carbon::parse($request->start_date) : $client->subscriptions()->first()->start_date;
+                $endDate = $request->has('end_date') ? Carbon::parse($request->end_date) : $client->subscriptions()->first()->end_date;
 
                 $durationInDays = $startDate->diffInDays($endDate);
 
-                $subscription = $client->subscriptions()->where('status', 'active')->first();
+                $currentDate = Carbon::today();
+                $status = $endDate->lessThan($currentDate) ? 'expired' : 'active';
+
+                $subscription = $client->subscriptions()->first();
                 if ($subscription) {
                     $subscription->update([
                         'start_date' => $startDate,
                         'end_date' => $endDate,
-                        'duration_in_days' => $durationInDays,
+                        'duration_in_days' => $durationInDays + 1,
+                        'status' => $status,
                     ]);
                 }
             }
