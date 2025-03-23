@@ -15,6 +15,7 @@ return new class extends Migration
             $table->decimal('price', 10, 2);
             $table->date('start_date');
             $table->date('end_date');
+            $table->integer('duration_in_days')->nullable();
             $table->enum('status', ['active', 'expired', 'canceled'])->default('active');
             $table->timestamps();
         });

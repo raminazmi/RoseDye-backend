@@ -13,8 +13,9 @@ class Client extends Model
         'phone',
         'current_balance',
         'renewal_balance',
-        'subscription_number',
+        'original_gift',
         'additional_gift',
+        'subscription_number',
     ];
 
     public function invoices()

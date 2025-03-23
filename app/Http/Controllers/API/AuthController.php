@@ -52,7 +52,7 @@ class AuthController extends Controller
 
     protected function sendVerificationCode($phone)
     {
-        $code = str_pad(rand(0, 9999), 4, '0', STR_PAD_LEFT); // رمز من 4 أرقام
+        $code = str_pad(rand(0, 9999), 4, '0', STR_PAD_LEFT);
         $expiresAt = now()->addMinutes(5);
         Cache::put('otp_' . $phone, $code, $expiresAt);
 

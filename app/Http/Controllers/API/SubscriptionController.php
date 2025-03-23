@@ -9,6 +9,7 @@ use Illuminate\Support\Facades\Log;
 use Omaralalwi\Gpdf\Gpdf;
 use Illuminate\Support\Facades\Validator;
 use Omaralalwi\Gpdf\GpdfConfig;
+use Carbon\Carbon;
 
 class SubscriptionController extends Controller
 {
@@ -104,46 +105,108 @@ class SubscriptionController extends Controller
         }
     }
 
-    // إضافة دالة لتجديد الاشتراك
     public function renew(Request $request, $id)
     {
-        $validator = Validator::make($request->all(), [
-            'amount' => 'required|numeric', // المبلغ المدفوع للتجديد
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'status' => false,
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
         try {
             $subscription = Subscription::findOrFail($id);
             $client = $subscription->client;
-            $currentBalance = $client->current_balance;
-            $renewalAmount = $request->amount; // المبلغ المدفوع (مثل 20 دينار)
 
-            // منطق التجديد
-            $baseLimit = 35; // الحد الأساسي
-            if ($currentBalance > $baseLimit) {
-                $excess = $currentBalance - $baseLimit;
-                $client->renewal_balance = $baseLimit - $excess; // خصم الفائض
-            } elseif ($currentBalance < $baseLimit) {
-                $remaining = $baseLimit - $currentBalance;
-                $client->renewal_balance = $baseLimit + $remaining; // إضافة المتبقي
-            } else {
-                $client->renewal_balance = $baseLimit;
+            $renewalCost = $request->input('renewal_cost');
+
+            if (is_null($renewalCost) || $renewalCost <= 0) {
+                throw new \Exception('قيمة التجديد غير صالحة');
             }
 
-            $client->current_balance = 0; // إعادة تعيين الرصيد الحالي
+            $remainingCost = $renewalCost;
+            $deductedFromRenewal = 0;
+            $deductedFromGift = 0;
+            $deductedFromBalance = 0;
+
+            if ($client->renewal_balance > 0) {
+                if ($client->renewal_balance >= $remainingCost) {
+                    $deductedFromRenewal = $remainingCost;
+                    $client->renewal_balance -= $remainingCost;
+                    $remainingCost = 0;
+                } else {
+                    $deductedFromRenewal = $client->renewal_balance;
+                    $remainingCost -= $client->renewal_balance;
+                    $client->renewal_balance = 0;
+                }
+            }
+
+            if ($remainingCost > 0 && $client->additional_gift > 0) {
+                if ($client->additional_gift >= $remainingCost) {
+                    $deductedFromGift = $remainingCost;
+                    $client->additional_gift -= $remainingCost;
+                    $remainingCost = 0;
+                } else {
+                    $deductedFromGift = $client->additional_gift;
+                    $remainingCost -= $client->additional_gift;
+                    $client->additional_gift = 0;
+                }
+            }
+
+            if ($remainingCost > 0) {
+                if ($client->current_balance >= $remainingCost) {
+                    $deductedFromBalance = $remainingCost;
+                    $client->current_balance -= $remainingCost;
+                    $remainingCost = 0;
+                } else {
+                    $client->renewal_balance += $deductedFromRenewal;
+                    $client->additional_gift += $deductedFromGift;
+                    throw new \Exception('الرصيد الحالي غير كافٍ. الرصيد الحالي: ' . $client->current_balance . ' د.ك، المطلوب: ' . $remainingCost . ' د.ك');
+                }
+            }
             $client->save();
 
+            $durationInDays = $subscription->duration_in_days;
+
+            if (is_null($durationInDays) || $durationInDays <= 0) {
+                throw new \Exception('مدة الاشتراك (duration_in_days) غير صالحة أو غير محددة');
+            }
+
+            $newStartDate = Carbon::now();
+            $newEndDate = Carbon::now()->addDays($durationInDays);
+
             $subscription->update([
-                'start_date' => now(),
-                'end_date' => now()->addMonths(2), // مدة الاشتراك 60 يوم
+                'start_date' => $newStartDate,
+                'end_date' => $newEndDate,
                 'status' => 'active',
             ]);
+
+            $message = "تم تجديد الاشتراك رقم {$subscription->subscription_number} بنجاح. ";
+            $message .= "تكلفة التجديد: {$renewalCost} د.ك. ";
+            $message .= "تاريخ الانتهاء الجديد: {$newEndDate->format('d-m-Y')}.";
+
+            $deductionDetails = '';
+            if ($deductedFromRenewal > 0) {
+                $deductionDetails .= "تم خصم {$deductedFromRenewal} د.ك من رصيد التجديد";
+            }
+            if ($deductedFromGift > 0) {
+                $deductionDetails .= $deductedFromRenewal > 0 ? " و" : "تم خصم ";
+                $deductionDetails .= "{$deductedFromGift} د.ك من الهدية";
+            }
+            if ($deductedFromBalance > 0) {
+                $deductionDetails .= ($deductedFromRenewal > 0 || $deductedFromGift > 0 ? " و" : "تم خصم ");
+                $deductionDetails .= "{$deductedFromBalance} د.ك من الرصيد الحالي";
+            }
+            if ($deductionDetails) {
+                $message .= " " . $deductionDetails . ".";
+            }
+
+            $message .= " رصيد التجديد المتبقي: {$client->renewal_balance} د.ك، الهدية المتبقية: {$client->additional_gift} د.ك، الرصيد الحالي: {$client->current_balance} د.ك.";
+
+            $notificationRequest = new Request([
+                'message' => $message,
+            ]);
+            $notificationResponse = $this->sendNotification($notificationRequest, $subscription);
+
+            $notificationData = $notificationResponse->getData(true);
+            if (!$notificationData['status']) {
+                Log::warning("فشل إرسال إشعار WhatsApp للعميل {$client->id}: " . $notificationData['message']);
+            }
+
+            Log::info("تم تجديد الاشتراك {$subscription->id} بنجاح. تاريخ البداية الجديد: {$newStartDate}، تاريخ النهاية الجديد: {$newEndDate}");
 
             return response()->json([
                 'status' => true,
@@ -151,12 +214,14 @@ class SubscriptionController extends Controller
                 'data' => [
                     'subscription' => $subscription,
                     'renewal_balance' => $client->renewal_balance,
+                    'additional_gift' => $client->additional_gift,
+                    'current_balance' => $client->current_balance,
                 ]
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => false,
-                'message' => 'حدث خطأ أثناء التجديد: ' . $e->getMessage()
+                'message' => $e->getMessage()
             ], 500);
         }
     }
@@ -256,7 +321,7 @@ class SubscriptionController extends Controller
     public function updateStatus(Request $request, $id)
     {
         $validator = Validator::make($request->all(), [
-            'status' => 'required|in:active,expired,canceled',
+            'status' => 'required|in:active,canceled',
         ]);
 
         if ($validator->fails()) {
@@ -268,6 +333,17 @@ class SubscriptionController extends Controller
 
         try {
             $subscription = Subscription::findOrFail($id);
+
+            if ($request->status === 'active') {
+                $today = Carbon::now();
+                if ($today->greaterThan($subscription->end_date)) {
+                    return response()->json([
+                        'status' => false,
+                        'message' => 'لا تستطيع تحديث الحالة إلى "نشط" لأن تاريخ انتهاء الاشتراك قد انتهى. يجب أن يجدد أولاً.'
+                    ], 403);
+                }
+            }
+
             $subscription->update([
                 'status' => $request->status,
             ]);

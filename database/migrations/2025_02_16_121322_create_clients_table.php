@@ -13,6 +13,7 @@ return new class extends Migration
             $table->string('phone')->unique();
             $table->integer('current_balance');
             $table->integer('renewal_balance');
+            $table->integer('original_gift')->nullable();
             $table->integer('additional_gift')->nullable();
             $table->string('subscription_number', 20)->unique();
             $table->timestamps();
