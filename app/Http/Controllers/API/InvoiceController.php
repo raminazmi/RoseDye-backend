@@ -153,6 +153,38 @@ class InvoiceController extends Controller
         }
     }
 
+    public function getNextInvoiceNumber(Request $request)
+    {
+        try {
+            $userId = auth()->id();
+            if (!$userId) {
+                return response()->json([
+                    'status' => false,
+                    'message' => 'يرجى تسجيل الدخول أولاً'
+                ], 401);
+            }
+
+            $maxInvoiceNumber = Invoice::where('user_id', $userId)->max('invoice_number');
+            $nextNumber = $maxInvoiceNumber ? (int)substr($maxInvoiceNumber, -5) + 1 : 1;
+            $invoiceNumber = str_pad($nextNumber, 5, '0', STR_PAD_LEFT);
+
+            while (Invoice::where('invoice_number', $invoiceNumber)->exists()) {
+                $nextNumber++;
+                $invoiceNumber = str_pad($nextNumber, 5, '0', STR_PAD_LEFT);
+            }
+
+            return response()->json([
+                'status' => true,
+                'next_invoice_number' => $invoiceNumber
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => false,
+                'message' => 'فشل في توليد الرقم: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
     private function sendWhatsAppNotification($phone, $message)
     {
         try {
