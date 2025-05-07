@@ -84,61 +84,20 @@ class InvoiceController extends Controller
             ]);
 
             $client = $invoice->client;
-            $invoicesCount = $client->invoices()->count();
+            $amount = $request->amount;
 
-            if ($invoicesCount == 1 && !is_null($client->original_gift) && $client->original_gift > 0) {
-                $client->additional_gift = $client->original_gift;
+            if ($client->additional_gift >= $amount) {
+                $client->additional_gift -= $amount;
+                $amount = 0;
+            } else {
+                $amount -= $client->additional_gift;
+                $client->additional_gift = 0;
             }
 
-            $giftAmount = $client->additional_gift ?? 0;
-
-            $deductedFromGift = 0;
-            $deductedFromBalance = 0;
-
-            $remainingAmount = $request->amount;
-
-            if ($giftAmount > 0) {
-                if ($giftAmount >= $remainingAmount) {
-                    $deductedFromGift = $remainingAmount;
-                    $client->additional_gift -= $remainingAmount;
-                    $remainingAmount = 0;
-                } else {
-                    $deductedFromGift = $giftAmount;
-                    $remainingAmount -= $giftAmount;
-                    $client->additional_gift = 0;
-                }
-            }
-
-            if ($remainingAmount > 0) {
-                $deductedFromBalance = $remainingAmount;
-                $client->current_balance -= $remainingAmount;
-            }
+            $client->renewal_balance -= $amount;
+            $client->current_balance += $request->amount;
 
             $client->save();
-
-            // $subscription = $client->subscriptions()->where('status', 'active')->first();
-            // if ($subscription) {
-            //     $remaining = $client->current_balance;
-            //     $message = "تم إضافة فاتورة رقم {$invoice->invoice_number} للاشتراك رقم {$client->subscription_number} بقيمة {$request->amount} د.ك. المتبقي: {$remaining} د.ك. ينتهي اشتراكك في {$subscription->end_date}";
-
-            //     if ($invoicesCount == 1 && !is_null($client->original_gift) && $client->original_gift > 0) {
-            //         $message .= " كما تم إضافة مبلغ هدية من الموقع بقيمة {$client->original_gift} د.ك.";
-            //     }
-
-            //     $deductionDetails = '';
-            //     if ($deductedFromGift > 0) {
-            //         $deductionDetails .= "تم خصم {$deductedFromGift} د.ك من الهدية";
-            //     }
-            //     if ($deductedFromBalance > 0) {
-            //         $deductionDetails .= $deductedFromGift > 0 ? " و" : "تم خصم ";
-            //         $deductionDetails .= " {$deductedFromBalance} د.ك من الرصيد الحالي";
-            //     }
-            //     if ($deductionDetails) {
-            //         $message .= ". " . $deductionDetails . ".";
-            //     }
-
-            //     $this->sendWhatsAppNotification($client->phone, $message);
-            // }
 
             return response()->json([
                 'status' => true,
@@ -235,97 +194,84 @@ class InvoiceController extends Controller
             $invoice = Invoice::where('user_id', auth()->id())->findOrFail($id);
             $client = $invoice->client;
 
-            $restoredToGift = 0;
-            $restoredToBalance = 0;
-            $deductedFromGift = 0;
-            $deductedFromBalance = 0;
+            // استعادة المبلغ القديم من الرصيد الحالي
+            $client->current_balance -= $invoice->amount;
 
+            // إعادة توزيع المبلغ القديم إلى رصيد الهدية ورصيد التجديد
             $oldAmount = $invoice->amount;
-            $originalGift = $client->original_gift ?? 0;
-            $currentGift = $client->additional_gift ?? 0;
+            if ($oldAmount > 0) {
+                $giftCapacity = $client->additional_gift; // الحد الأقصى الذي يمكن إضافته إلى الهدية
+                $restoredToGift = min($oldAmount, $giftCapacity);
+                $client->additional_gift += $restoredToGift;
+                $oldAmount -= $restoredToGift;
 
-            if ($originalGift > 0) {
-                $availableGiftSpace = $originalGift - $currentGift;
-                if ($availableGiftSpace > 0) {
-                    if ($oldAmount <= $availableGiftSpace) {
-                        $restoredToGift = $oldAmount;
-                        $client->additional_gift += $restoredToGift;
-                        $oldAmount = 0;
-                    } else {
-                        $restoredToGift = $availableGiftSpace;
-                        $client->additional_gift += $restoredToGift;
-                        $oldAmount -= $restoredToGift;
-                        $restoredToBalance = $oldAmount;
-                        $client->current_balance += $restoredToBalance;
-                    }
-                } else {
-                    $restoredToBalance = $oldAmount;
-                    $client->current_balance += $restoredToBalance;
-                }
-            } else {
-                $restoredToBalance = $oldAmount;
-                $client->current_balance += $restoredToBalance;
-            }
-
-            $remainingAmount = $request->amount;
-            $giftAmount = $client->additional_gift ?? 0;
-
-            if ($giftAmount > 0) {
-                if ($giftAmount >= $remainingAmount) {
-                    $deductedFromGift = $remainingAmount;
-                    $client->additional_gift -= $remainingAmount;
-                    $remainingAmount = 0;
-                } else {
-                    $deductedFromGift = $giftAmount;
-                    $remainingAmount -= $giftAmount;
-                    $client->additional_gift = 0;
+                if ($oldAmount > 0) {
+                    $client->renewal_balance += $oldAmount;
                 }
             }
 
-            if ($remainingAmount > 0) {
-                $deductedFromBalance = $remainingAmount;
-                $client->current_balance -= $remainingAmount;
-            }
-
+            // تحديث الفاتورة بالبيانات الجديدة
             $invoice->update([
                 'client_id' => $request->client_id,
                 'date' => $request->date,
                 'amount' => $request->amount,
             ]);
 
+            // خصم المبلغ الجديد من رصيد الهدية أولاً، ثم من رصيد التجديد
+            $newAmount = $request->amount;
+            $deductedFromGift = 0;
+            $deductedFromRenewal = 0;
+
+            if ($client->additional_gift > 0 && $newAmount > 0) {
+                $deductedFromGift = min($client->additional_gift, $newAmount);
+                $client->additional_gift -= $deductedFromGift;
+                $newAmount -= $deductedFromGift;
+            }
+
+            if ($newAmount > 0 && $client->renewal_balance > 0) {
+                $deductedFromRenewal = min($client->renewal_balance, $newAmount);
+                $client->renewal_balance -= $deductedFromRenewal;
+                $newAmount -= $deductedFromRenewal;
+            }
+
+            // إضافة المبلغ الجديد إلى الرصيد الحالي
+            $client->current_balance += $request->amount;
             $client->save();
 
-            // $subscription = $client->subscriptions()->where('status', 'active')->first();
-            // if ($subscription) {
-            //     $remaining = $client->current_balance;
-            //     $message = "تم تحديث فاتورة رقم {$invoice->invoice_number} للاشتراك رقم {$client->subscription_number} بقيمة {$request->amount} د.ك. المتبقي: {$remaining} د.ك. ينتهي اشتراكك في {$subscription->end_date}";
+            // إضافة منطق الإشعارات (تم تعليقه في الكود الأصلي، يمكن تفعيله إذا لزم الأمر)
+            /*
+        $subscription = $client->subscriptions()->where('status', 'active')->first();
+        if ($subscription) {
+            $remaining = $client->current_balance;
+            $message = "تم تحديث فاتورة رقم {$invoice->invoice_number} للاشتراك رقم {$client->subscription_number} بقيمة {$request->amount} د.ك. المتبقي: {$remaining} د.ك. ينتهي اشتراكك في {$subscription->end_date}";
 
-            //     $restorationDetails = '';
-            //     if ($restoredToGift > 0) {
-            //         $restorationDetails .= "تمت استعادة {$restoredToGift} د.ك إلى الهدية";
-            //     }
-            //     if ($restoredToBalance > 0) {
-            //         $restorationDetails .= $restoredToGift > 0 ? " و" : "تمت استعادة ";
-            //         $restorationDetails .= " {$restoredToBalance} د.ك إلى الرصيد الحالي";
-            //     }
-            //     if ($restorationDetails) {
-            //         $message .= ". " . $restorationDetails;
-            //     }
+            $restorationDetails = '';
+            if ($restoredToGift > 0) {
+                $restorationDetails .= "تمت استعادة {$restoredToGift} د.ك إلى الهدية";
+            }
+            if ($oldAmount > 0) {
+                $restorationDetails .= $restoredToGift > 0 ? " و" : "تمت استعادة ";
+                $restorationDetails .= " {$oldAmount} د.ك إلى الرصيد الحالي";
+            }
+            if ($restorationDetails) {
+                $message .= ". " . $restorationDetails;
+            }
 
-            //     $deductionDetails = '';
-            //     if ($deductedFromGift > 0) {
-            //         $deductionDetails .= "تم خصم {$deductedFromGift} د.ك من الهدية";
-            //     }
-            //     if ($deductedFromBalance > 0) {
-            //         $deductionDetails .= $deductedFromGift > 0 ? " و" : "تم خصم ";
-            //         $deductionDetails .= " {$deductedFromBalance} د.ك من الرصيد الحالي";
-            //     }
-            //     if ($deductionDetails) {
-            //         $message .= ". " . $deductionDetails . ".";
-            //     }
+            $deductionDetails = '';
+            if ($deductedFromGift > 0) {
+                $deductionDetails .= "تم خصم {$deductedFromGift} د.ك من الهدية";
+            }
+            if ($deductedFromRenewal > 0) {
+                $deductionDetails .= $deductedFromGift > 0 ? " و" : "تم خصم ";
+                $deductionDetails .= " {$deductedFromRenewal} د.ك من الرصيد الحالي";
+            }
+            if ($deductionDetails) {
+                $message .= ". " . $deductionDetails . ".";
+            }
 
-            //     $this->sendWhatsAppNotification($client->phone, $message);
-            // }
+            $this->sendWhatsAppNotification($client->phone, $message);
+        }
+        */
 
             return response()->json([
                 'status' => true,
@@ -365,59 +311,49 @@ class InvoiceController extends Controller
             $invoice = Invoice::where('user_id', auth()->id())->findOrFail($id);
             $client = $invoice->client;
 
-            $restoredAmount = $invoice->amount;
-            $originalGift = $client->original_gift ?? 0;
-            $currentGift = $client->additional_gift ?? 0;
-            $restoredToGift = 0;
-            $restoredToBalance = 0;
+            // استعادة المبلغ من الرصيد الحالي
+            $client->current_balance -= $invoice->amount;
 
-            if ($originalGift > 0) {
-                $availableGiftSpace = $originalGift - $currentGift;
-                if ($availableGiftSpace > 0) {
-                    if ($restoredAmount <= $availableGiftSpace) {
-                        $restoredToGift = $restoredAmount;
-                        $client->additional_gift += $restoredToGift;
-                        $restoredAmount = 0;
-                    } else {
-                        $restoredToGift = $availableGiftSpace;
-                        $client->additional_gift += $restoredToGift;
-                        $restoredAmount -= $restoredToGift;
-                        $restoredToBalance = $restoredAmount;
-                        $client->current_balance += $restoredToBalance;
-                    }
-                } else {
-                    $restoredToBalance = $restoredAmount;
-                    $client->current_balance += $restoredToBalance;
+            // إعادة توزيع المبلغ إلى رصيد الهدية ورصيد التجديد
+            $amount = $invoice->amount;
+            $restoredToGift = 0;
+            if ($amount > 0) {
+                $giftCapacity = $client->additional_gift; // الحد الأقصى الذي يمكن إضافته إلى الهدية
+                $restoredToGift = min($amount, $giftCapacity);
+                $client->additional_gift += $restoredToGift;
+                $amount -= $restoredToGift;
+
+                if ($amount > 0) {
+                    $client->renewal_balance += $amount;
                 }
-            } else {
-                $restoredToBalance = $restoredAmount;
-                $client->current_balance += $restoredToBalance;
             }
 
             $client->save();
 
-            // $subscription = $client->subscriptions()->where('status', 'active')->first();
-            // if ($subscription) {
-            //     $remaining = $client->current_balance;
-            //     $message = "تم حذف فاتورة رقم {$invoice->invoice_number} للاشتراك رقم {$client->subscription_number}. تمت استعادة {$invoice->amount} د.ك إلى رصيدك. المتبقي: {$remaining} د.ك. ينتهي اشتراكك في {$subscription->end_date}.";
+            // إضافة منطق الإشعارات (تم تعليقه في الكود الأصلي، يمكن تفعيله إذا لزم الأمر)
+            /*
+        $subscription = $client->subscriptions()->where('status', 'active')->first();
+        if ($subscription) {
+            $remaining = $client->current_balance;
+            $message = "تم حذف فاتورة رقم {$invoice->invoice_number} للاشتراك رقم {$client->subscription_number}. تمت استعادة {$invoice->amount} د.ك إلى رصيدك. المتبقي: {$remaining} د.ك. ينتهي اشتراكك في {$subscription->end_date}.";
 
-            //     $restorationDetails = '';
-            //     if ($restoredToGift > 0) {
-            //         $restorationDetails .= "تمت استعادة {$restoredToGift} د.ك إلى الهدية";
-            //     }
-            //     if ($restoredToBalance > 0) {
-            //         $restorationDetails .= $restoredToGift > 0 ? " و" : "تمت استعادة ";
-            //         $restorationDetails .= " {$restoredToBalance} د.ك إلى الرصيد الحالي";
-            //     }
-            //     if ($restorationDetails) {
-            //         $message .= " " . $restorationDetails . ".";
-            //     }
+            $restorationDetails = '';
+            if ($restoredToGift > 0) {
+                $restorationDetails .= "تمت استعادة {$restoredToGift} د.ك إلى الهدية";
+            }
+            if ($amount > 0) {
+                $restorationDetails .= $restoredToGift > 0 ? " و" : "تمت استعادة ";
+                $restorationDetails .= " {$amount} د.ك إلى الرصيد الحالي";
+            }
+            if ($restorationDetails) {
+                $message .= " " . $restorationDetails . ".";
+            }
 
-            //     $this->sendWhatsAppNotification($client->phone, $message);
-            // }
+            $this->sendWhatsAppNotification($client->phone, $message);
+        }
+        */
 
             $invoice->delete();
-
             return response()->json([
                 'status' => true,
                 'message' => 'تم حذف الفاتورة بنجاح'

@@ -25,7 +25,8 @@ class SubscriptionController extends Controller
 
             $subscriptions->getCollection()->transform(function ($sub) {
                 $client = $sub->client;
-                $totalDue = $client && $client->current_balance <= 0 ? abs($client->current_balance) : 0;
+                // التعديل هنا: استخدام renewal_balance بدلاً من current_balance
+                $totalDue = $client && $client->renewal_balance < 0 ? abs($client->renewal_balance) : 0;
                 $totalINV = $client ? $client->invoices()->sum('amount') : 0;
 
                 return [
@@ -112,116 +113,83 @@ class SubscriptionController extends Controller
             $client = $subscription->client;
 
             $renewalCost = $request->input('renewal_cost');
+            $gift = $request->input('gift', 0); // استقبال قيمة الهدية، افتراضيًا 0 إذا لم تُدخل
 
-            if (is_null($renewalCost) || $renewalCost <= 0) {
+            // التحقق من صحة المدخلات
+            if (!is_numeric($renewalCost) || $renewalCost <= 0) {
                 throw new \Exception('قيمة التجديد غير صالحة');
             }
-
-            $remainingCost = $renewalCost;
-            $deductedFromRenewal = 0;
-            $deductedFromGift = 0;
-            $deductedFromBalance = 0;
-
-            if ($client->renewal_balance > 0) {
-                if ($client->renewal_balance >= $remainingCost) {
-                    $deductedFromRenewal = $remainingCost;
-                    $client->renewal_balance -= $remainingCost;
-                    $remainingCost = 0;
-                } else {
-                    $deductedFromRenewal = $client->renewal_balance;
-                    $remainingCost -= $client->renewal_balance;
-                    $client->renewal_balance = 0;
-                }
+            if (!is_numeric($gift) || $gift < 0) {
+                throw new \Exception('قيمة الهدية غير صالحة');
             }
 
-            if ($remainingCost > 0 && $client->additional_gift > 0) {
-                if ($client->additional_gift >= $remainingCost) {
-                    $deductedFromGift = $remainingCost;
-                    $client->additional_gift -= $remainingCost;
-                    $remainingCost = 0;
-                } else {
-                    $deductedFromGift = $client->additional_gift;
-                    $remainingCost -= $client->additional_gift;
-                    $client->additional_gift = 0;
-                }
-            }
+            // 1. حساب المبلغ المستحق من الرصيد السابق
+            $previousBalance = $client->renewal_balance;
+            $totalDue = $previousBalance < 0 ? abs($previousBalance) : 0;
 
-            if ($remainingCost > 0) {
-                if ($client->current_balance >= $remainingCost) {
-                    $deductedFromBalance = $remainingCost;
-                    $client->current_balance -= $remainingCost;
-                    $remainingCost = 0;
-                } else {
-                    $client->renewal_balance += $deductedFromRenewal;
-                    $client->additional_gift += $deductedFromGift;
-                    throw new \Exception('الرصيد الحالي غير كافٍ. الرصيد الحالي: ' . $client->current_balance . ' د.ك، المطلوب: ' . $remainingCost . ' د.ك');
-                }
-            }
-            $client->save();
+            // 2. خصم من الهدية أولاً
+            $deductedFromGift = min($totalDue, $client->additional_gift);
+            $client->additional_gift -= $deductedFromGift;
+            $totalDue -= $deductedFromGift;
 
+            // 3. حساب المبلغ الفعلي المضاف بعد الخصم
+            $netRenewal = $renewalCost - $totalDue;
+
+            // 4. تحديث رصيد التجديد
+            $client->renewal_balance = $netRenewal;
+
+            // 5. إضافة قيمة الهدية إلى additional_gift
+            $client->additional_gift += $gift;
+
+            // 6. تجديد فترة الاشتراك
             $durationInDays = $subscription->duration_in_days;
 
-            if (is_null($durationInDays) || $durationInDays <= 0) {
-                throw new \Exception('مدة الاشتراك (duration_in_days) غير صالحة أو غير محددة');
+            if (!is_numeric($durationInDays) || $durationInDays <= 0) {
+                throw new \Exception('مدة الاشتراك غير صالحة');
             }
-
-            $newStartDate = Carbon::now();
             $newEndDate = Carbon::now()->addDays($durationInDays);
 
             $subscription->update([
-                'start_date' => $newStartDate,
+                'start_date' => Carbon::now(),
                 'end_date' => $newEndDate,
-                'status' => 'active',
+                'status' => 'active'
             ]);
 
-            $message = "تم تجديد الاشتراك رقم {$subscription->subscription_number} بنجاح. ";
-            $message .= "تكلفة التجديد: {$renewalCost} د.ك. ";
-            $message .= "تاريخ الانتهاء الجديد: {$newEndDate->format('d-m-Y')}.";
+            $client->save();
 
-            $deductionDetails = '';
-            if ($deductedFromRenewal > 0) {
-                $deductionDetails .= "تم خصم {$deductedFromRenewal} د.ك من رصيد التجديد";
+            // إنشاء الرسالة مع تفاصيل الإضافة والخصم والهدية
+            $message = "تم تجديد الاشتراك رقم {$client->subscription_number} بنجاح. ";
+            $message .= "تم إضافة {$renewalCost} د.ك إلى رصيد التجديد. ";
+            if ($totalDue > 0) {
+                $message .= "تم خصم مبلغ {$totalDue} د.ك مستحق. ";
             }
             if ($deductedFromGift > 0) {
-                $deductionDetails .= $deductedFromRenewal > 0 ? " و" : "تم خصم ";
-                $deductionDetails .= "{$deductedFromGift} د.ك من الهدية";
+                $message .= "تم خصم {$deductedFromGift} د.ك من رصيد الهدية. ";
             }
-            if ($deductedFromBalance > 0) {
-                $deductionDetails .= ($deductedFromRenewal > 0 || $deductedFromGift > 0 ? " و" : "تم خصم ");
-                $deductionDetails .= "{$deductedFromBalance} د.ك من الرصيد الحالي";
+            if ($gift > 0) {
+                $message .= "تم إضافة {$gift} د.ك كهدية. ";
             }
-            if ($deductionDetails) {
-                $message .= " " . $deductionDetails . ".";
-            }
+            $message .= "رصيد التجديد الجديد: {$client->renewal_balance} د.ك. ";
+            $message .= "رصيد الهدية الجديد: {$client->additional_gift} د.ك. ";
+            $message .= "تاريخ الانتهاء الجديد: {$newEndDate->format('d-m-Y')}.";
 
-            $message .= " رصيد التجديد المتبقي: {$client->renewal_balance} د.ك، الهدية المتبقية: {$client->additional_gift} د.ك، الرصيد الحالي: {$client->current_balance} د.ك.";
-
-            $notificationRequest = new Request([
-                'message' => $message,
-            ]);
-            $notificationResponse = $this->sendNotification($notificationRequest, $subscription);
-
-            $notificationData = $notificationResponse->getData(true);
-            if (!$notificationData['status']) {
-                Log::warning("فشل إرسال إشعار WhatsApp للعميل {$client->id}: " . $notificationData['message']);
-            }
-
-            Log::info("تم تجديد الاشتراك {$subscription->id} بنجاح. تاريخ البداية الجديد: {$newStartDate}، تاريخ النهاية الجديد: {$newEndDate}");
+            // إرسال الإشعارات
+            $notificationRequest = new Request(['message' => $message]);
+            $this->sendNotification($notificationRequest, $subscription);
 
             return response()->json([
                 'status' => true,
-                'message' => 'تم تجديد الاشتراك بنجاح',
+                'message' => 'تم التجديد بنجاح',
                 'data' => [
-                    'subscription' => $subscription,
                     'renewal_balance' => $client->renewal_balance,
                     'additional_gift' => $client->additional_gift,
-                    'current_balance' => $client->current_balance,
+                    'end_date' => $subscription->end_date
                 ]
             ]);
         } catch (\Exception $e) {
             return response()->json([
                 'status' => false,
-                'message' => $e->getMessage()
+                'message' => 'حدث خطأ: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -282,7 +250,8 @@ class SubscriptionController extends Controller
 
             $data = $subscriptions->map(function ($sub) {
                 $client = $sub->client;
-                $totalDue = $client && $client->current_balance <= 0 ? abs($client->current_balance) : 0;
+                // التعديل هنا: استخدام renewal_balance بدلاً من current_balance
+                $totalDue = $client && $client->renewal_balance < 0 ? abs($client->renewal_balance) : 0;
                 $totalINV = $client ? $client->invoices()->sum('amount') : 0;
 
                 return [
