@@ -109,6 +109,14 @@ class ClientController extends Controller
                 'status' => $status,
             ]);
 
+            User::create([
+                'name' => 'user' . $request->subscription_number,
+                'phone' => $request->phone,
+                'email' => $request->phone . '@example.com',
+                'password' => Hash::make('123456'),
+                'role' => 'user'
+            ]);
+
             return response()->json([
                 'status' => true,
                 'message' => 'تم إنشاء العميل بنجاح',
@@ -159,6 +167,8 @@ class ClientController extends Controller
         }
 
         try {
+            $oldPhone = $client->phone;
+            $oldSubscriptionNumber = $client->subscription_number;
             $client->update([
                 'phone' => $request->input('phone', $client->phone),
                 'current_balance' => $request->input('current_balance', $client->current_balance),
@@ -167,12 +177,29 @@ class ClientController extends Controller
                 'additional_gift' => $request->input('additional_gift', $client->additional_gift),
             ]);
 
+            if ($oldPhone !== $client->phone) {
+                $user = User::where('phone', $oldPhone)->first();
+                if ($user) {
+                    $user->update([
+                        'phone' => $client->phone,
+                        'email' => $client->phone . '@example.com'
+                    ]);
+                }
+            }
+            if ($oldSubscriptionNumber !== $client->subscription_number) {
+                $user = User::where('name', 'user' . $oldSubscriptionNumber)->first();
+                if ($user) {
+                    $user->update([
+                        'name' => 'user' . $client->subscription_number
+                    ]);
+                }
+            }
+
             if ($request->has('start_date') || $request->has('end_date')) {
                 $startDate = $request->has('start_date') ? Carbon::parse($request->start_date) : $client->subscriptions()->first()->start_date;
                 $endDate = $request->has('end_date') ? Carbon::parse($request->end_date) : $client->subscriptions()->first()->end_date;
 
                 $durationInDays = $startDate->diffInDays($endDate);
-
                 $currentDate = Carbon::today();
                 $status = $endDate->lessThan($currentDate) ? 'expired' : 'active';
 
@@ -190,7 +217,7 @@ class ClientController extends Controller
             return response()->json([
                 'status' => true,
                 'data' => $client,
-                'message' => 'تم تحديث العميل بنجاح'
+                'message' => 'تم تحديث العميل والمستخدم المرتبط به بنجاح'
             ]);
         } catch (\Exception $e) {
             return response()->json([
