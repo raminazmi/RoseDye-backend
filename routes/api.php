@@ -14,7 +14,7 @@ use App\Http\Controllers\API\{
 Route::prefix('v1')->group(function () {
     // Authentication
     Route::post('/client-login', [AuthController::class, 'clientLogin']);
-    Route::post('/login', [AuthController::class, 'login']);
+    Route::post('/login', [AuthController::class, 'login'])->name('login');
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/logout', [AuthController::class, 'logout'])->middleware('auth:sanctum');
     Route::post('/verify-phone', [VerificationController::class, 'sendCode']);

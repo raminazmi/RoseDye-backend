@@ -7,6 +7,8 @@ use App\Models\Invoice;
 use Illuminate\Support\Facades\Validator;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
+use Illuminate\Support\Facades\Log;
+use GuzzleHttp\Client;
 
 class InvoiceController extends Controller
 {
@@ -37,10 +39,11 @@ class InvoiceController extends Controller
 
     public function store(Request $request)
     {
+        // التحقق من صحة البيانات المدخلة
         $validator = Validator::make($request->all(), [
             'client_id' => 'required|exists:clients,id',
             'date' => 'required|date',
-            'amount' => 'required|numeric',
+            'amount' => 'required|numeric|min:0', // يسمح بالأرقام العشرية أو الصحيحة
         ], [
             'client_id.required' => 'حقل معرف العميل مطلوب.',
             'client_id.exists' => 'حقل معرف العميل غير موجود في قاعدة البيانات.',
@@ -48,6 +51,7 @@ class InvoiceController extends Controller
             'date.date' => 'حقل التاريخ يجب أن يكون تاريخًا صحيحًا.',
             'amount.required' => 'حقل المبلغ مطلوب.',
             'amount.numeric' => 'حقل المبلغ يجب أن يكون رقمًا.',
+            'amount.min' => 'حقل المبلغ يجب ألا يكون سالبًا.',
         ]);
 
         if ($validator->fails()) {
@@ -80,7 +84,7 @@ class InvoiceController extends Controller
                 'client_id' => $request->client_id,
                 'invoice_number' => $invoiceNumber,
                 'date' => $request->date,
-                'amount' => $request->amount,
+                'amount' => $request->amount, // يُخزن المبلغ كما أُدخل (مثل 35.25)
             ]);
 
             $client = $invoice->client;
@@ -96,8 +100,20 @@ class InvoiceController extends Controller
 
             $client->renewal_balance -= $amount;
             $client->current_balance += $request->amount;
-
             $client->save();
+            $formattedDate = \Carbon\Carbon::parse($invoice->date)->format('Y-m-d');
+
+            $message = "تم إضافة فاتورة جديدة بنجاح. ";
+            $message .= "رقم الفاتورة: {$invoice->invoice_number} ";
+            $message .= "التاريخ: {$formattedDate} ";
+            $message .= "المبلغ: {$invoice->amount} د.ك ";
+            $message .= "شكرًا لك!";
+
+            if ($client->phone) {
+                $this->sendWhatsAppNotification($client->phone, $message);
+            } else {
+                Log::warning("لم يتم إرسال رسالة WhatsApp لأن رقم الهاتف غير متوفر للعميل ID: {$client->id}");
+            }
 
             return response()->json([
                 'status' => true,
@@ -173,7 +189,7 @@ class InvoiceController extends Controller
         $validator = Validator::make($request->all(), [
             'client_id' => 'required|exists:clients,id',
             'date' => 'required|date',
-            'amount' => 'required|numeric',
+            'amount' => 'required|numeric|min:0',
         ], [
             'client_id.required' => 'حقل معرف العميل مطلوب.',
             'client_id.exists' => 'حقل معرف العميل غير موجود في قاعدة البيانات.',
@@ -181,6 +197,7 @@ class InvoiceController extends Controller
             'date.date' => 'حقل التاريخ يجب أن يكون تاريخًا صحيحًا.',
             'amount.required' => 'حقل المبلغ مطلوب.',
             'amount.numeric' => 'حقل المبلغ يجب أن يكون رقمًا.',
+            'amount.min' => 'حقل المبلغ يجب ألا يكون سالبًا.',
         ]);
 
         if ($validator->fails()) {
@@ -238,40 +255,37 @@ class InvoiceController extends Controller
             $client->current_balance += $request->amount;
             $client->save();
 
-            // إضافة منطق الإشعارات (تم تعليقه في الكود الأصلي، يمكن تفعيله إذا لزم الأمر)
-            /*
-        $subscription = $client->subscriptions()->where('status', 'active')->first();
-        if ($subscription) {
-            $remaining = $client->current_balance;
-            $message = "تم تحديث فاتورة رقم {$invoice->invoice_number} للاشتراك رقم {$client->subscription_number} بقيمة {$request->amount} د.ك. المتبقي: {$remaining} د.ك. ينتهي اشتراكك في {$subscription->end_date}";
+            $subscription = $client->subscriptions()->where('status', 'active')->first();
+            if ($subscription) {
+                $remaining = $client->current_balance;
+                $message = "تم تحديث فاتورة رقم {$invoice->invoice_number} للاشتراك رقم {$client->subscription_number} بقيمة {$request->amount} د.ك. المتبقي: {$remaining} د.ك. ينتهي اشتراكك في {$subscription->end_date}";
 
-            $restorationDetails = '';
-            if ($restoredToGift > 0) {
-                $restorationDetails .= "تمت استعادة {$restoredToGift} د.ك إلى الهدية";
-            }
-            if ($oldAmount > 0) {
-                $restorationDetails .= $restoredToGift > 0 ? " و" : "تمت استعادة ";
-                $restorationDetails .= " {$oldAmount} د.ك إلى الرصيد الحالي";
-            }
-            if ($restorationDetails) {
-                $message .= ". " . $restorationDetails;
-            }
+                $restorationDetails = '';
+                if ($restoredToGift > 0) {
+                    $restorationDetails .= "تمت استعادة {$restoredToGift} د.ك إلى الهدية";
+                }
+                if ($oldAmount > 0) {
+                    $restorationDetails .= $restoredToGift > 0 ? " و" : "تمت استعادة ";
+                    $restorationDetails .= " {$oldAmount} د.ك إلى الرصيد الحالي";
+                }
+                if ($restorationDetails) {
+                    $message .= ". " . $restorationDetails;
+                }
 
-            $deductionDetails = '';
-            if ($deductedFromGift > 0) {
-                $deductionDetails .= "تم خصم {$deductedFromGift} د.ك من الهدية";
-            }
-            if ($deductedFromRenewal > 0) {
-                $deductionDetails .= $deductedFromGift > 0 ? " و" : "تم خصم ";
-                $deductionDetails .= " {$deductedFromRenewal} د.ك من الرصيد الحالي";
-            }
-            if ($deductionDetails) {
-                $message .= ". " . $deductionDetails . ".";
-            }
+                $deductionDetails = '';
+                if ($deductedFromGift > 0) {
+                    $deductionDetails .= "تم خصم {$deductedFromGift} د.ك من الهدية";
+                }
+                if ($deductedFromRenewal > 0) {
+                    $deductionDetails .= $deductedFromGift > 0 ? " و" : "تم خصم ";
+                    $deductionDetails .= " {$deductedFromRenewal} د.ك من الرصيد الحالي";
+                }
+                if ($deductionDetails) {
+                    $message .= ". " . $deductionDetails . ".";
+                }
 
-            $this->sendWhatsAppNotification($client->phone, $message);
-        }
-        */
+                $this->sendWhatsAppNotification($client->phone, $message);
+            }
 
             return response()->json([
                 'status' => true,
@@ -330,28 +344,25 @@ class InvoiceController extends Controller
 
             $client->save();
 
-            // إضافة منطق الإشعارات (تم تعليقه في الكود الأصلي، يمكن تفعيله إذا لزم الأمر)
-            /*
-        $subscription = $client->subscriptions()->where('status', 'active')->first();
-        if ($subscription) {
-            $remaining = $client->current_balance;
-            $message = "تم حذف فاتورة رقم {$invoice->invoice_number} للاشتراك رقم {$client->subscription_number}. تمت استعادة {$invoice->amount} د.ك إلى رصيدك. المتبقي: {$remaining} د.ك. ينتهي اشتراكك في {$subscription->end_date}.";
+            $subscription = $client->subscriptions()->where('status', 'active')->first();
+            if ($subscription) {
+                $remaining = $client->current_balance;
+                $message = "تم حذف فاتورة رقم {$invoice->invoice_number} للاشتراك رقم {$client->subscription_number}. تمت استعادة {$invoice->amount} د.ك إلى رصيدك. المتبقي: {$remaining} د.ك. ينتهي اشتراكك في {$subscription->end_date}.";
 
-            $restorationDetails = '';
-            if ($restoredToGift > 0) {
-                $restorationDetails .= "تمت استعادة {$restoredToGift} د.ك إلى الهدية";
-            }
-            if ($amount > 0) {
-                $restorationDetails .= $restoredToGift > 0 ? " و" : "تمت استعادة ";
-                $restorationDetails .= " {$amount} د.ك إلى الرصيد الحالي";
-            }
-            if ($restorationDetails) {
-                $message .= " " . $restorationDetails . ".";
-            }
+                $restorationDetails = '';
+                if ($restoredToGift > 0) {
+                    $restorationDetails .= "تمت استعادة {$restoredToGift} د.ك إلى الهدية";
+                }
+                if ($amount > 0) {
+                    $restorationDetails .= $restoredToGift > 0 ? " و" : "تمت استعادة ";
+                    $restorationDetails .= " {$amount} د.ك إلى الرصيد الحالي";
+                }
+                if ($restorationDetails) {
+                    $message .= " " . $restorationDetails . ".";
+                }
 
-            $this->sendWhatsAppNotification($client->phone, $message);
-        }
-        */
+                $this->sendWhatsAppNotification($client->phone, $message);
+            }
 
             $invoice->delete();
             return response()->json([

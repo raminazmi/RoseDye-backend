@@ -17,6 +17,7 @@ class AuthController extends Controller
         try {
             $validatedData = $request->validate([
                 'phone' => 'required|string|exists:clients,phone',
+                'remember_me' => 'sometimes|boolean'
             ], [
                 'phone.required' => 'رقم الهاتف مطلوب',
                 'phone.string' => 'يجب أن يكون رقم الهاتف نصًا',
@@ -25,13 +26,21 @@ class AuthController extends Controller
 
             $client = Client::where('phone', $request->phone)->firstOrFail();
             $user = User::where('phone', $client->phone)->firstOrFail();
-            $tempToken = $user->createToken('temp_auth_token', ['otp-pending'])->plainTextToken;
+
+            $tokenExpiration = $request->remember_me ? now()->addDays(30) : null;
+            $tempToken = $user->createToken(
+                'temp_auth_token',
+                ['otp-pending'],
+                $tokenExpiration
+            )->plainTextToken;
+
             $this->sendVerificationCode($client->phone);
 
             return response()->json([
                 'client' => $client,
                 'temp_token' => $tempToken,
                 'token_type' => 'Bearer',
+                'expires_at' => $tokenExpiration,
                 'message' => 'تم إرسال رمز التحقق إلى هاتفك'
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -102,6 +111,7 @@ class AuthController extends Controller
                 'phone' => 'required|string',
                 'otp' => 'required|string|digits:4',
                 'temp_token' => 'required|string',
+                'remember_me' => 'sometimes|boolean'
             ], [
                 'phone.required' => 'رقم الهاتف مطلوب',
                 'phone.string' => 'يجب أن يكون رقم الهاتف نصًا',
@@ -124,7 +134,14 @@ class AuthController extends Controller
             }
 
             $user = User::where('phone', $client->phone)->firstOrFail();
-            $fullToken = $user->createToken('auth_token')->plainTextToken;
+
+            $tokenExpiration = $request->remember_me ? now()->addDays(30) : null;
+            $fullToken = $user->createToken(
+                'auth_token',
+                ['*'],
+                $tokenExpiration
+            )->plainTextToken;
+
             Cache::forget('otp_' . $request->phone);
 
             return response()->json([
@@ -132,6 +149,7 @@ class AuthController extends Controller
                 'client_id' => $client->id,
                 'client' => $client,
                 'token_type' => 'Bearer',
+                'expires_at' => $tokenExpiration,
                 'message' => 'تم تسجيل الدخول بنجاح'
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
@@ -201,42 +219,37 @@ class AuthController extends Controller
             $validatedData = $request->validate([
                 'email' => 'required|string|email',
                 'password' => 'required|string|min:8',
-            ], [
-                'email.required' => 'البريد الإلكتروني مطلوب',
-                'email.string' => 'يجب أن يكون البريد الإلكتروني نصًا',
-                'email.email' => 'صيغة البريد الإلكتروني غير صالحة',
-                'email.unique' => 'البريد الإلكتروني مسجل مسبقًا',
-                'password.required' => 'كلمة المرور مطلوبة',
-                'password.string' => 'يجب أن تكون كلمة المرور نصًا',
-                'password.min' => 'يجب أن تحتوي كلمة المرور على 8 أحرف على الأقل',
+                'remember_me' => 'sometimes|boolean'
             ]);
 
-            $user = User::where('email', $request->email)->first();
-
-            if (!$user) {
-                return response()->json([
-                    'message' => 'البريد الإلكتروني غير مسجل'
-                ], 404);
-            }
+            $user = User::where('email', $request->email)->firstOrFail();
 
             if (!Auth::attempt($request->only('email', 'password'))) {
-                return response()->json([
-                    'message' => 'كلمة المرور غير صحيحة'
-                ], 401);
+                return response()->json(['message' => 'كلمة المرور غير صحيحة'], 401);
             }
 
-            $token = $user->createToken('auth_token')->plainTextToken;
+            $tokenExpiration = $request->remember_me ? now()->addDays(30) : null;
+            $token = $user->createToken(
+                'auth_token',
+                ['*'],
+                $tokenExpiration
+            )->plainTextToken;
 
             return response()->json([
                 'user' => $user,
                 'access_token' => $token,
                 'token_type' => 'Bearer',
+                'expires_at' => $tokenExpiration
             ]);
         } catch (\Illuminate\Validation\ValidationException $e) {
             return response()->json([
                 'message' => 'فشل التحقق من الصحة',
                 'errors' => $e->errors(),
             ], 422);
+        } catch (\Exception $e) {
+            return response()->json([
+                'message' => 'حدث خطأ: ' . $e->getMessage()
+            ], 500);
         }
     }
 
