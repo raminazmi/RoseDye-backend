@@ -3,6 +3,7 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
+use App\Models\Client;
 use App\Models\Subscription;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -59,11 +60,8 @@ class SubscriptionController extends Controller
     public function show($id)
     {
         try {
+            $user = auth()->user();
             $subscription = Subscription::with(['client.invoices'])->findOrFail($id);
-
-            if (!$subscription->client) {
-                throw new \Exception('العميل غير موجود');
-            }
 
             $perPage = request()->input('per_page', 5);
             $page = request()->input('page', 1);
@@ -78,7 +76,7 @@ class SubscriptionController extends Controller
                     'status' => $subscription->status,
                     'client' => [
                         'id' => $subscription->client->id,
-                        'name' => $subscription->client->name,
+                        'name' => $subscription->client->user->name ?? 'غير محدد',
                         'subscription_number' => $subscription->client->subscription_number,
                         'phone' => $subscription->client->phone,
                         'current_balance' => $subscription->client->current_balance,
@@ -96,21 +94,38 @@ class SubscriptionController extends Controller
                 'status' => true,
                 'data' => $formattedData,
             ]);
-        } catch (\Exception $e) {
-            Log::error('Subscription Error: ' . $e->getMessage());
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            Log::error('Subscription Not Found: ID ' . $id);
             return response()->json([
                 'status' => false,
-                'message' => 'الاشتراك غير موجود: ' . $e->getMessage()
+                'message' => 'الاشتراك غير موجود',
             ], 404);
+        } catch (\Exception $e) {
+            Log::error('Subscription Show Error: ' . $e->getMessage());
+            return response()->json([
+                'status' => false,
+                'message' => 'فشل في جلب الاشتراك: ' . $e->getMessage(),
+            ], 500);
         }
     }
 
     public function renew(Request $request, $id)
     {
         try {
+            $user = auth()->user();
             $subscription = Subscription::findOrFail($id);
-            $client = $subscription->client;
+            if ($user->role === 'admin') {
+                $client = Client::findOrFail($request->client_id);
+                $canceledSubscription = $client->subscriptions()->where('status', 'canceled')->first();
+                if ($canceledSubscription) {
+                    return response()->json([
+                        'status' => false,
+                        'message' => 'لا يمكن تجديد اشتراك موقوف. الاشتراك رقم: ' . $subscription->client->subscription_number
+                    ], 403);
+                }
+            }
 
+            $client = $subscription->client;
             $renewalCost = $request->input('renewal_cost');
             $gift = $request->input('gift', 0);
 
@@ -131,7 +146,6 @@ class SubscriptionController extends Controller
             $netRenewal = $previousRenewalBalance + $renewalCost - $totalDue;
 
             $client->renewal_balance = $netRenewal;
-
             $client->additional_gift += $gift;
 
             $newStartDate = Carbon::now();
@@ -313,6 +327,72 @@ class SubscriptionController extends Controller
             return response()->json([
                 'status' => false,
                 'message' => 'حدث خطأ أثناء تحديث الحالة: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getAbandonedSubscriptions()
+    {
+        try {
+            $abandoned = Subscription::where('status', 'expired')
+                ->whereDoesntHave('client.invoices', function ($query) {
+                    $query->where('date', '>=', Carbon::now()->subDays(120));
+                })
+                ->with('client')
+                ->get();
+
+            $formattedData = $abandoned->map(function ($sub) {
+                return [
+                    'id' => $sub->id,
+                    'subscription_number' => $sub->client->subscription_number ?? 'N/A',
+                    'end_date' => $sub->end_date,
+                    'client_phone' => $sub->client->phone ?? 'N/A',
+                    'status' => $sub->status,
+                ];
+            });
+
+            return response()->json([
+                'status' => true,
+                'data' => $formattedData
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error fetching abandoned subscriptions: ' . $e->getMessage());
+            return response()->json([
+                'status' => false,
+                'message' => 'فشل في جلب الاشتراكات المهملة: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function getExpiringSoonSubscriptions()
+    {
+        try {
+            $expiringSoon = Subscription::where('status', 'active')
+                ->whereBetween('end_date', [Carbon::now(), Carbon::now()->addDays(10)])
+                ->with('client')
+                ->get();
+
+            $formattedData = $expiringSoon->map(function ($sub) {
+                $totalDue = $sub->client && $sub->client->renewal_balance < 0 ? abs($sub->client->renewal_balance) : 0;
+                return [
+                    'id' => $sub->id,
+                    'subscription_number' => $sub->client->subscription_number ?? 'N/A',
+                    'end_date' => $sub->end_date,
+                    'client_phone' => $sub->client->phone ?? 'N/A',
+                    'status' => $sub->status,
+                    'total_due' => $totalDue,
+                ];
+            });
+
+            return response()->json([
+                'status' => true,
+                'data' => $formattedData
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error fetching expiring soon subscriptions: ' . $e->getMessage());
+            return response()->json([
+                'status' => false,
+                'message' => 'فشل في جلب الاشتراكات المشارفة على الانتهاء: ' . $e->getMessage()
             ], 500);
         }
     }

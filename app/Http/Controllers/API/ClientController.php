@@ -231,11 +231,14 @@ class ClientController extends Controller
     {
         try {
             $client = Client::findOrFail($id);
-            $client->subscriptions()->delete();
-            $user = $client->user;
-            if ($user) {
-                $user->delete();
+            if ($client->phone) {
+                $user = User::where('phone', $client->phone)->first();
+                if ($user) {
+                    $user->delete();
+                }
             }
+
+            $client->subscriptions()->delete();
             $client->delete();
 
             return response()->json([
@@ -253,5 +256,32 @@ class ClientController extends Controller
                 'message' => 'حدث خطأ أثناء الحذف: ' . $e->getMessage()
             ], 500);
         }
+    }
+
+    public function getAbandonedSubscriptions()
+    {
+        $abandoned = Subscription::where('status', 'expired')
+            ->where('updated_at', '<', Carbon::now()->subDays(120))
+            ->with('client')
+            ->get();
+
+        return response()->json([
+            'status' => true,
+            'data' => $abandoned
+        ]);
+    }
+
+    public function reassignSubscriptionNumber($oldSubscriptionId, $newClientId)
+    {
+        $oldSubscription = Subscription::findOrFail($oldSubscriptionId);
+        $newClient = Client::findOrFail($newClientId);
+
+        $newClient->update(['subscription_number' => $oldSubscription->client->subscription_number]);
+        $oldSubscription->update(['status' => 'reassigned']);
+
+        return response()->json([
+            'status' => true,
+            'message' => 'تم إعادة تعيين رقم الاشتراك بنجاح'
+        ]);
     }
 }

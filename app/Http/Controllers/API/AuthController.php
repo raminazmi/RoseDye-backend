@@ -25,6 +25,13 @@ class AuthController extends Controller
             ]);
 
             $client = Client::where('phone', $request->phone)->firstOrFail();
+            $subscription = $client->subscriptions()->latest()->first();
+            if ($subscription && $subscription->status === 'canceled') {
+                return response()->json([
+                    'message' => 'لا يمكن تسجيل الدخول. اشتراكك موقوف.'
+                ], 403);
+            }
+
             $user = User::where('phone', $client->phone)->firstOrFail();
 
             $tokenExpiration = $request->remember_me ? now()->addDays(30) : null;

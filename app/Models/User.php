@@ -9,21 +9,14 @@ use Laravel\Sanctum\HasApiTokens;
 
 class User extends Authenticatable
 {
-    use HasFactory, Notifiable, HasApiTokens;
+    use HasApiTokens, HasFactory, Notifiable;
 
     protected $fillable = [
         'name',
+        'phone',
         'email',
         'password',
-        'phone',
-        'avatar',
         'role',
-        'bio',
-        'facebook',
-        'twitter',
-        'linkedin',
-        'instagram',
-        'github',
     ];
 
     protected $hidden = [
@@ -31,16 +24,13 @@ class User extends Authenticatable
         'remember_token',
     ];
 
-    public function invoices()
-    {
-        return $this->hasMany(Invoice::class);
-    }
+    protected $casts = [
+        'email_verified_at' => 'datetime',
+        'password' => 'hashed',
+    ];
 
-    protected function casts(): array
+    public function client()
     {
-        return [
-            'email_verified_at' => 'datetime',
-            'password' => 'hashed',
-        ];
+        return $this->hasOne(Client::class, 'user_id', 'id');
     }
 }

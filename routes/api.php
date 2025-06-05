@@ -47,6 +47,8 @@ Route::prefix('v1')->group(function () {
         Route::get('/subscriptions/{id}', [SubscriptionController::class, 'show']);
         Route::patch('/subscriptions/{subscription}/status', [SubscriptionController::class, 'updateStatus']);
         Route::post('subscriptions/{subscription}/renew', [SubscriptionController::class, 'renew']);
+        Route::get('/subscriptions/abandoned', [SubscriptionController::class, 'getAbandonedSubscriptions']);
+        Route::get('/subscriptions/expiring-soon', [SubscriptionController::class, 'getExpiringSoonSubscriptions']);
 
         // Statistics
         Route::get('/statistics', [StatisticsController::class, 'index']);

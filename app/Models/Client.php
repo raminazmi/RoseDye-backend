@@ -16,6 +16,7 @@ class Client extends Model
         'original_gift',
         'additional_gift',
         'subscription_number',
+        'user_id',
     ];
 
     public function invoices()
@@ -30,6 +31,6 @@ class Client extends Model
 
     public function user()
     {
-        return $this->hasOne(User::class, 'phone', 'phone');
+        return $this->belongsTo(User::class, 'user_id', 'id');
     }
 }

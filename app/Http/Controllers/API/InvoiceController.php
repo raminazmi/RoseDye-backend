@@ -8,7 +8,7 @@ use Illuminate\Support\Facades\Validator;
 use Illuminate\Http\Request;
 use Carbon\Carbon;
 use Illuminate\Support\Facades\Log;
-use GuzzleHttp\Client;
+use  App\Models\Client;
 
 class InvoiceController extends Controller
 {
@@ -63,6 +63,7 @@ class InvoiceController extends Controller
 
         try {
             $userId = auth()->id();
+            $user = auth()->user();
             if (!$userId) {
                 return response()->json([
                     'status' => false,
@@ -70,6 +71,16 @@ class InvoiceController extends Controller
                 ], 401);
             }
 
+            if ($user->role === 'admin') {
+                $client = Client::findOrFail($request->client_id);
+                $canceledSubscription = $client->subscriptions()->where('status', 'canceled')->first();
+                if ($canceledSubscription) {
+                    return response()->json([
+                        'status' => false,
+                        'message' => 'لا يمكن إضافة فاتورة لاشتراك موقوف.'
+                    ], 403);
+                }
+            }
             $maxInvoiceNumber = Invoice::where('user_id', $userId)->max('invoice_number');
             $nextNumber = $maxInvoiceNumber ? (int)substr($maxInvoiceNumber, -5) + 1 : 1;
             $invoiceNumber = str_pad($nextNumber, 5, '0', STR_PAD_LEFT);
@@ -101,13 +112,16 @@ class InvoiceController extends Controller
             $client->renewal_balance -= $amount;
             $client->current_balance += $request->amount;
             $client->save();
-            $formattedDate = \Carbon\Carbon::parse($invoice->date)->format('Y-m-d');
 
-            $message = "تم إضافة فاتورة جديدة بنجاح. ";
-            $message .= "رقم الفاتورة: {$invoice->invoice_number} ";
-            $message .= "التاريخ: {$formattedDate} ";
-            $message .= "المبلغ: {$invoice->amount} د.ك ";
-            $message .= "شكرًا لك!";
+            $subscription = $client->subscriptions()->where('status', 'active')->first();
+            $endDate = $subscription ? Carbon::parse($subscription->end_date)->format('d/m/Y') : 'غير محدد';
+
+            $message = "تم اضافة فاتوره رقم {$invoice->invoice_number}\n";
+            $message .= "بقيمة " . number_format($invoice->amount, 3) . " دك\n";
+            $message .= "متبقي من اشتراكك " . number_format($client->renewal_balance, 3) . " دك\n";
+            $message .= "اشتراكك ينتهي في {$endDate}\n";
+            $message .= "للاطلاع على الفواتير الرجاء الضغط على الرابط\n";
+            $message .= "https://36rwrd.online";
 
             if ($client->phone) {
                 $this->sendWhatsAppNotification($client->phone, $message);
@@ -124,6 +138,141 @@ class InvoiceController extends Controller
             return response()->json([
                 'status' => false,
                 'message' => 'حدث خطأ أثناء إنشاء الفاتورة: ' . $e->getMessage()
+            ], 500);
+        }
+    }
+
+    public function update(Request $request, $id)
+    {
+        $validator = Validator::make($request->all(), [
+            'client_id' => 'required|exists:clients,id',
+            'date' => 'required|date',
+            'amount' => 'required|numeric|min:0',
+        ], [
+            'client_id.required' => 'حقل معرف العميل مطلوب.',
+            'client_id.exists' => 'حقل معرف العميل غير موجود في قاعدة البيانات.',
+            'date.required' => 'حقل التاريخ مطلوب.',
+            'date.date' => 'حقل التاريخ يجب أن يكون تاريخًا صحيحًا.',
+            'amount.required' => 'حقل المبلغ مطلوب.',
+            'amount.numeric' => 'حقل المبلغ يجب أن يكون رقمًا.',
+            'amount.min' => 'حقل المبلغ يجب ألا يكون سالبًا.',
+        ]);
+
+        if ($validator->fails()) {
+            return response()->json([
+                'status' => false,
+                'errors' => $validator->errors()
+            ], 422);
+        }
+
+        try {
+            $user = auth()->user();
+            if ($user->role === 'admin') {
+                $client = Client::findOrFail($request->client_id);
+                $canceledSubscription = $client->subscriptions()->where('status', 'canceled')->first();
+                if ($canceledSubscription) {
+                    return response()->json([
+                        'status' => false,
+                        'message' => 'لا يمكن تحديث فاتورة لاشتراك موقوف.'
+                    ], 403);
+                }
+            }
+            $invoice = Invoice::where('user_id', auth()->id())->findOrFail($id);
+            $client = $invoice->client;
+
+            // استعادة المبلغ القديم من الرصيد الحالي
+            $client->current_balance -= $invoice->amount;
+
+            // إعادة توزيع المبلغ القديم إلى رصيد الهدية ورصيد التجديد
+            $oldAmount = $invoice->amount;
+            $restoredToGift = 0;
+            if ($oldAmount > 0) {
+                $giftCapacity = $client->additional_gift; // الحد الأقصى الذي يمكن إضافته إلى الهدية
+                $restoredToGift = min($oldAmount, $giftCapacity);
+                $client->additional_gift += $restoredToGift;
+                $oldAmount -= $restoredToGift;
+
+                if ($oldAmount > 0) {
+                    $client->renewal_balance += $oldAmount;
+                }
+            }
+
+            // تحديث الفاتورة بالبيانات الجديدة
+            $invoice->update([
+                'client_id' => $request->client_id,
+                'date' => $request->date,
+                'amount' => $request->amount,
+            ]);
+
+            // خصم المبلغ الجديد من رصيد الهدية أولاً، ثم من رصيد التجديد
+            $newAmount = $request->amount;
+            $deductedFromGift = 0;
+            $deductedFromRenewal = 0;
+
+            if ($client->additional_gift > 0 && $newAmount > 0) {
+                $deductedFromGift = min($client->additional_gift, $newAmount);
+                $client->additional_gift -= $deductedFromGift;
+                $newAmount -= $deductedFromGift;
+            }
+
+            if ($newAmount > 0 && $client->renewal_balance > 0) {
+                $deductedFromRenewal = min($client->renewal_balance, $newAmount);
+                $client->renewal_balance -= $deductedFromRenewal;
+                $newAmount -= $deductedFromRenewal;
+            }
+
+            // إضافة المبلغ الجديد إلى الرصيد الحالي
+            $client->current_balance += $request->amount;
+            $client->save();
+
+            $subscription = $client->subscriptions()->where('status', 'active')->first();
+            $endDate = $subscription ? Carbon::parse($subscription->end_date)->format('d/m/Y') : 'غير محدد';
+
+            $message = "تم تحديث فاتوره رقم {$invoice->invoice_number}\n";
+            $message .= "بقيمة " . number_format($invoice->amount, 3) . " دك\n";
+            $message .= "متبقي من اشتراكك " . number_format($client->renewal_balance, 3) . " دك\n";
+            $message .= "اشتراكك ينتهي في {$endDate}\n";
+
+            $restorationDetails = '';
+            if ($restoredToGift > 0) {
+                $restorationDetails .= "تمت استعادة " . number_format($restoredToGift, 3) . " د.ك إلى الهدية";
+            }
+            if ($oldAmount > 0) {
+                $restorationDetails .= $restoredToGift > 0 ? " و" : "تمت استعادة ";
+                $restorationDetails .= number_format($oldAmount, 3) . " د.ك إلى الرصيد الحالي";
+            }
+            if ($restorationDetails) {
+                $message .= $restorationDetails . "\n";
+            }
+
+            $deductionDetails = '';
+            if ($deductedFromGift > 0) {
+                $deductionDetails .= "تم خصم " . number_format($deductedFromGift, 3) . " د.ك من الهدية";
+            }
+            if ($deductedFromRenewal > 0) {
+                $deductionDetails .= $deductedFromGift > 0 ? " و" : "تم خصم ";
+                $deductionDetails .= number_format($deductedFromRenewal, 3) . " د.ك من الرصيد الحالي";
+            }
+            if ($deductionDetails) {
+                $message .= $deductionDetails . "\n";
+            }
+
+            $message .= "للاطلاع على الفواتير الرجاء الضغط على الرابط\n";
+            $message .= "https://36rwrd.online";
+
+            if ($client->phone) {
+                $this->sendWhatsAppNotification($client->phone, $message);
+            }
+
+            return response()->json([
+                'status' => true,
+                'message' => 'تم تحديث الفاتورة بنجاح',
+                'data' => $invoice
+            ]);
+        } catch (\Exception $e) {
+            return response()->json([
+                'status' => false,
+                'message' => 'حدث خطأ أثناء تحديث الفاتورة: ' . $e->getMessage()
             ], 500);
         }
     }
@@ -184,121 +333,6 @@ class InvoiceController extends Controller
         }
     }
 
-    public function update(Request $request, $id)
-    {
-        $validator = Validator::make($request->all(), [
-            'client_id' => 'required|exists:clients,id',
-            'date' => 'required|date',
-            'amount' => 'required|numeric|min:0',
-        ], [
-            'client_id.required' => 'حقل معرف العميل مطلوب.',
-            'client_id.exists' => 'حقل معرف العميل غير موجود في قاعدة البيانات.',
-            'date.required' => 'حقل التاريخ مطلوب.',
-            'date.date' => 'حقل التاريخ يجب أن يكون تاريخًا صحيحًا.',
-            'amount.required' => 'حقل المبلغ مطلوب.',
-            'amount.numeric' => 'حقل المبلغ يجب أن يكون رقمًا.',
-            'amount.min' => 'حقل المبلغ يجب ألا يكون سالبًا.',
-        ]);
-
-        if ($validator->fails()) {
-            return response()->json([
-                'status' => false,
-                'errors' => $validator->errors()
-            ], 422);
-        }
-
-        try {
-            $invoice = Invoice::where('user_id', auth()->id())->findOrFail($id);
-            $client = $invoice->client;
-
-            // استعادة المبلغ القديم من الرصيد الحالي
-            $client->current_balance -= $invoice->amount;
-
-            // إعادة توزيع المبلغ القديم إلى رصيد الهدية ورصيد التجديد
-            $oldAmount = $invoice->amount;
-            if ($oldAmount > 0) {
-                $giftCapacity = $client->additional_gift; // الحد الأقصى الذي يمكن إضافته إلى الهدية
-                $restoredToGift = min($oldAmount, $giftCapacity);
-                $client->additional_gift += $restoredToGift;
-                $oldAmount -= $restoredToGift;
-
-                if ($oldAmount > 0) {
-                    $client->renewal_balance += $oldAmount;
-                }
-            }
-
-            // تحديث الفاتورة بالبيانات الجديدة
-            $invoice->update([
-                'client_id' => $request->client_id,
-                'date' => $request->date,
-                'amount' => $request->amount,
-            ]);
-
-            // خصم المبلغ الجديد من رصيد الهدية أولاً، ثم من رصيد التجديد
-            $newAmount = $request->amount;
-            $deductedFromGift = 0;
-            $deductedFromRenewal = 0;
-
-            if ($client->additional_gift > 0 && $newAmount > 0) {
-                $deductedFromGift = min($client->additional_gift, $newAmount);
-                $client->additional_gift -= $deductedFromGift;
-                $newAmount -= $deductedFromGift;
-            }
-
-            if ($newAmount > 0 && $client->renewal_balance > 0) {
-                $deductedFromRenewal = min($client->renewal_balance, $newAmount);
-                $client->renewal_balance -= $deductedFromRenewal;
-                $newAmount -= $deductedFromRenewal;
-            }
-
-            // إضافة المبلغ الجديد إلى الرصيد الحالي
-            $client->current_balance += $request->amount;
-            $client->save();
-
-            $subscription = $client->subscriptions()->where('status', 'active')->first();
-            if ($subscription) {
-                $remaining = $client->current_balance;
-                $message = "تم تحديث فاتورة رقم {$invoice->invoice_number} للاشتراك رقم {$client->subscription_number} بقيمة {$request->amount} د.ك. المتبقي: {$remaining} د.ك. ينتهي اشتراكك في {$subscription->end_date}";
-
-                $restorationDetails = '';
-                if ($restoredToGift > 0) {
-                    $restorationDetails .= "تمت استعادة {$restoredToGift} د.ك إلى الهدية";
-                }
-                if ($oldAmount > 0) {
-                    $restorationDetails .= $restoredToGift > 0 ? " و" : "تمت استعادة ";
-                    $restorationDetails .= " {$oldAmount} د.ك إلى الرصيد الحالي";
-                }
-                if ($restorationDetails) {
-                    $message .= ". " . $restorationDetails;
-                }
-
-                $deductionDetails = '';
-                if ($deductedFromGift > 0) {
-                    $deductionDetails .= "تم خصم {$deductedFromGift} د.ك من الهدية";
-                }
-                if ($deductedFromRenewal > 0) {
-                    $deductionDetails .= $deductedFromGift > 0 ? " و" : "تم خصم ";
-                    $deductionDetails .= " {$deductedFromRenewal} د.ك من الرصيد الحالي";
-                }
-                if ($deductionDetails) {
-                    $message .= ". " . $deductionDetails . ".";
-                }
-
-                $this->sendWhatsAppNotification($client->phone, $message);
-            }
-
-            return response()->json([
-                'status' => true,
-                'message' => 'تم تحديث الفاتورة بنجاح',
-                'data' => $invoice
-            ]);
-        } catch (\Exception $e) {
-            return response()->json([
-                'status' => false,
-                'message' => 'حدث خطأ أثناء تحديث الفاتورة: ' . $e->getMessage()
-            ], 500);
-        }
-    }
 
     public function show($id)
     {
