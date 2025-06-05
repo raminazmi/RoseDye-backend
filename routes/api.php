@@ -41,14 +41,14 @@ Route::prefix('v1')->group(function () {
         Route::post('/invoices/{invoice}/download', [InvoiceController::class, 'download']);
         Route::get('/invoices/{invoice}/download', [InvoiceController::class, 'download']);
 
-        // Subscriptions
-        Route::apiResource('subscriptions', SubscriptionController::class);
-        Route::post('subscriptions/{subscription}/notify', [SubscriptionController::class, 'sendNotification']);
-        Route::get('/subscriptions/{id}', [SubscriptionController::class, 'show']);
+
+        // Specific routes (must come before apiResource)
+        Route::get('/subscriptions/abandoned', [SubscriptionController::class, 'abandoned']);
+        Route::get('/subscriptions/expiring-soon', [SubscriptionController::class, 'expiring']);
+        Route::post('/subscriptions/{subscription}/renew', [SubscriptionController::class, 'renew']);
+        Route::post('/subscriptions/{subscription}/notify', [SubscriptionController::class, 'sendNotification']);
         Route::patch('/subscriptions/{subscription}/status', [SubscriptionController::class, 'updateStatus']);
-        Route::post('subscriptions/{subscription}/renew', [SubscriptionController::class, 'renew']);
-        Route::get('/subscriptions/abandoned', [SubscriptionController::class, 'getAbandonedSubscriptions']);
-        Route::get('/subscriptions/expiring-soon', [SubscriptionController::class, 'getExpiringSoonSubscriptions']);
+        Route::apiResource('subscriptions', SubscriptionController::class);
 
         // Statistics
         Route::get('/statistics', [StatisticsController::class, 'index']);

@@ -3,7 +3,6 @@
 namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
-use App\Models\Client;
 use App\Models\Subscription;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
@@ -60,8 +59,11 @@ class SubscriptionController extends Controller
     public function show($id)
     {
         try {
-            $user = auth()->user();
             $subscription = Subscription::with(['client.invoices'])->findOrFail($id);
+
+            if (!$subscription->client) {
+                throw new \Exception('العميل غير موجود');
+            }
 
             $perPage = request()->input('per_page', 5);
             $page = request()->input('page', 1);
@@ -76,7 +78,7 @@ class SubscriptionController extends Controller
                     'status' => $subscription->status,
                     'client' => [
                         'id' => $subscription->client->id,
-                        'name' => $subscription->client->user->name ?? 'غير محدد',
+                        'name' => $subscription->client->name,
                         'subscription_number' => $subscription->client->subscription_number,
                         'phone' => $subscription->client->phone,
                         'current_balance' => $subscription->client->current_balance,
@@ -94,38 +96,21 @@ class SubscriptionController extends Controller
                 'status' => true,
                 'data' => $formattedData,
             ]);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            Log::error('Subscription Not Found: ID ' . $id);
-            return response()->json([
-                'status' => false,
-                'message' => 'الاشتراك غير موجود',
-            ], 404);
         } catch (\Exception $e) {
-            Log::error('Subscription Show Error: ' . $e->getMessage());
+            Log::error('Subscription Error: ' . $e->getMessage());
             return response()->json([
                 'status' => false,
-                'message' => 'فشل في جلب الاشتراك: ' . $e->getMessage(),
-            ], 500);
+                'message' => 'الاشتراك غير موجود: ' . $e->getMessage()
+            ], 404);
         }
     }
 
     public function renew(Request $request, $id)
     {
         try {
-            $user = auth()->user();
             $subscription = Subscription::findOrFail($id);
-            if ($user->role === 'admin') {
-                $client = Client::findOrFail($request->client_id);
-                $canceledSubscription = $client->subscriptions()->where('status', 'canceled')->first();
-                if ($canceledSubscription) {
-                    return response()->json([
-                        'status' => false,
-                        'message' => 'لا يمكن تجديد اشتراك موقوف. الاشتراك رقم: ' . $subscription->client->subscription_number
-                    ], 403);
-                }
-            }
-
             $client = $subscription->client;
+
             $renewalCost = $request->input('renewal_cost');
             $gift = $request->input('gift', 0);
 
@@ -146,6 +131,7 @@ class SubscriptionController extends Controller
             $netRenewal = $previousRenewalBalance + $renewalCost - $totalDue;
 
             $client->renewal_balance = $netRenewal;
+
             $client->additional_gift += $gift;
 
             $newStartDate = Carbon::now();
@@ -331,12 +317,12 @@ class SubscriptionController extends Controller
         }
     }
 
-    public function getAbandonedSubscriptions()
+    public function abandoned()
     {
         try {
-            $abandoned = Subscription::where('status', 'expired')
+            $abandoned = Subscription::where('status', 'active')
                 ->whereDoesntHave('client.invoices', function ($query) {
-                    $query->where('date', '>=', Carbon::now()->subDays(120));
+                    $query->where('date', '>=', Carbon::now()->subDays(0));
                 })
                 ->with('client')
                 ->get();
@@ -364,35 +350,46 @@ class SubscriptionController extends Controller
         }
     }
 
-    public function getExpiringSoonSubscriptions()
+    public function expiring(Request $request)
     {
         try {
-            $expiringSoon = Subscription::where('status', 'active')
-                ->whereBetween('end_date', [Carbon::now(), Carbon::now()->addDays(10)])
-                ->with('client')
-                ->get();
+            $perPage = $request->input('per_page', 5);
+            $page = $request->input('page', 1);
 
-            $formattedData = $expiringSoon->map(function ($sub) {
-                $totalDue = $sub->client && $sub->client->renewal_balance < 0 ? abs($sub->client->renewal_balance) : 0;
+            $expiringSoon = Subscription::where('status', 'active')
+                ->with(['client' => function ($query) {
+                    $query->withCount('invoices');
+                }])->paginate($perPage, ['*'], 'page', $page);
+
+            $expiringSoon->getCollection()->transform(function ($sub) {
                 return [
                     'id' => $sub->id,
                     'subscription_number' => $sub->client->subscription_number ?? 'N/A',
                     'end_date' => $sub->end_date,
                     'client_phone' => $sub->client->phone ?? 'N/A',
                     'status' => $sub->status,
-                    'total_due' => $totalDue,
+                    'total_due' => $sub->client->current_balance ?? 0,
+                    'client' => [
+                        'subscription_number' => $sub->client->subscription_number ?? 'N/A',
+                        'phone' => $sub->client->phone ?? 'N/A',
+                        'renewal_balance' => $sub->client->renewal_balance ?? 'N/A',
+                        'additional_gift' => $sub->client->additional_gift ?? 'N/A',
+                    ],
                 ];
             });
-
             return response()->json([
                 'status' => true,
-                'data' => $formattedData
+                'data' => $expiringSoon->items(),
+                'total' => $expiringSoon->total(),
+                'current_page' => $expiringSoon->currentPage(),
+                'last_page' => $expiringSoon->lastPage(),
+                'message' => 'Failed to fetch expiring subscriptions'
             ]);
         } catch (\Exception $e) {
-            Log::error('Error fetching expiring soon subscriptions: ' . $e->getMessage());
+            Log::error('Error fetching expiring subscriptions: ' . $e->getMessage());
             return response()->json([
                 'status' => false,
-                'message' => 'فشل في جلب الاشتراكات المشارفة على الانتهاء: ' . $e->getMessage()
+                'message' => 'Failed to fetch expiring subscriptions'
             ], 500);
         }
     }
