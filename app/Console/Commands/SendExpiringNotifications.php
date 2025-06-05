@@ -50,8 +50,8 @@ class SendExpiringNotifications extends Command
                     continue;
                 }
 
-                $startDate = Carbon::parse($subscription->start_date, 'Asia/Kuwait')->format('d-m-Y');
-                $message = "تنبيه: اشتراكك رقم {$subscription->client->subscription_number} سيبدأ بتاريخ {$startDate}. المبلغ المستحق " . abs($subscription->client->renewal_balance) . " د.ك. الرجاء التأكد من الدفع.";
+                $endDate = Carbon::parse($subscription->end_date, 'Asia/Kuwait')->format('d-m-Y');
+                $message = "تنبيه: اشتراكك رقم {$subscription->client->subscription_number} على وشك الانتهاء بتاريخ {$endDate}. المتبقي " . abs($subscription->client->renewal_balance) . " الرجاء استخدامه قبل الانتهاء";
 
                 try {
                     $response = $client->post($url, [
