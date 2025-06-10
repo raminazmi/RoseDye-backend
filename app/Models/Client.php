@@ -4,29 +4,35 @@ namespace App\Models;
 
 use Illuminate\Database\Eloquent\Model;
 use Laravel\Sanctum\HasApiTokens;
+use Illuminate\Database\Eloquent\Factories\HasFactory;
+
 
 class Client extends Model
 {
-    use HasApiTokens;
+    use HasFactory, HasApiTokens;
 
     protected $fillable = [
         'phone',
         'current_balance',
         'renewal_balance',
+        'subscription_number_id',
         'original_gift',
         'additional_gift',
-        'subscription_number',
-        'user_id',
     ];
-
-    public function invoices()
-    {
-        return $this->hasMany(Invoice::class, 'client_id', 'id');
-    }
 
     public function subscriptions()
     {
-        return $this->hasMany(Subscription::class, 'client_id', 'id');
+        return $this->hasMany(Subscription::class);
+    }
+
+    public function subscriptionNumber()
+    {
+        return $this->belongsTo(SubscriptionNumber::class);
+    }
+
+    public function invoices()
+    {
+        return $this->hasMany(Invoice::class);
     }
 
     public function user()

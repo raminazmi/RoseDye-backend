@@ -15,7 +15,7 @@ return new class extends Migration
             $table->string('invoice_number', 20)->unique();
             $table->date('date');
             $table->decimal('amount', 10, 3);
-            $table->timestamps();
+            $table->timestamps(); 
         });
     }
 

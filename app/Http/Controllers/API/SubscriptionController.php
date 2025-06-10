@@ -4,6 +4,7 @@ namespace App\Http\Controllers\API;
 
 use App\Http\Controllers\Controller;
 use App\Models\Subscription;
+use App\Models\SubscriptionNumber;
 use Illuminate\Http\Request;
 use Illuminate\Support\Facades\Log;
 use Omaralalwi\Gpdf\Gpdf;
@@ -37,6 +38,8 @@ class SubscriptionController extends Controller
                     'total_inv' => $totalINV,
                     'client_phone' => $client->phone ?? 'N/A',
                     'status' => $sub->status,
+                    'is_available' => $client->subscriptionNumber ? $client->subscriptionNumber->is_available : true,
+                    'subscription_number_id' => $client->subscription_number_id,
                 ];
             });
 
@@ -274,10 +277,14 @@ class SubscriptionController extends Controller
         }
     }
 
+
     public function updateStatus(Request $request, $id)
     {
         $validator = Validator::make($request->all(), [
             'status' => 'required|in:active,canceled',
+        ], [
+            'status.required' => 'حقل الحالة مطلوب.',
+            'status.in' => 'الحالة يجب أن تكون إما "نشط" أو "موقوف".',
         ]);
 
         if ($validator->fails()) {
@@ -300,16 +307,56 @@ class SubscriptionController extends Controller
                 }
             }
 
+            // تحديث حالة الاشتراك
             $subscription->update([
                 'status' => $request->status,
             ]);
+
+            // تحديث حالة توفر رقم الاشتراك في جدول subscription_numbers
+            $client = $subscription->client;
+            if ($client && $client->subscription_number_id) {
+                $subscriptionNumber = SubscriptionNumber::find($client->subscription_number_id);
+                if ($subscriptionNumber) {
+                    $subscriptionNumber->is_available = $request->status === 'canceled' ? true : false;
+                    $subscriptionNumber->save();
+
+                    Log::info('Subscription number availability updated', [
+                        'subscription_number_id' => $subscriptionNumber->id,
+                        'is_available' => $subscriptionNumber->is_available,
+                        'subscription_status' => $request->status,
+                    ]);
+                } else {
+                    Log::warning('Subscription number not found for client', [
+                        'client_id' => $client->id,
+                        'subscription_number_id' => $client->subscription_number_id,
+                    ]);
+                }
+            } else {
+                Log::warning('No client or subscription number ID found for subscription', [
+                    'subscription_id' => $subscription->id,
+                ]);
+            }
 
             return response()->json([
                 'status' => true,
                 'data' => $subscription,
                 'message' => 'تم تحديث حالة الاشتراك بنجاح'
             ]);
+        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
+            Log::error('Subscription not found', [
+                'subscription_id' => $id,
+                'message' => $e->getMessage(),
+            ]);
+            return response()->json([
+                'status' => false,
+                'message' => 'الاشتراك غير موجود'
+            ], 404);
         } catch (\Exception $e) {
+            Log::error('Error updating subscription status', [
+                'subscription_id' => $id,
+                'message' => $e->getMessage(),
+                'trace' => $e->getTraceAsString(),
+            ]);
             return response()->json([
                 'status' => false,
                 'message' => 'حدث خطأ أثناء تحديث الحالة: ' . $e->getMessage()
@@ -322,7 +369,7 @@ class SubscriptionController extends Controller
         try {
             $abandoned = Subscription::where('status', 'active')
                 ->whereDoesntHave('client.invoices', function ($query) {
-                    $query->where('date', '>=', Carbon::now()->subDays(0));
+                    $query->where('date', '>=', Carbon::now()->subDays(120));
                 })
                 ->with('client')
                 ->get();
@@ -330,7 +377,7 @@ class SubscriptionController extends Controller
             $formattedData = $abandoned->map(function ($sub) {
                 return [
                     'id' => $sub->id,
-                    'subscription_number' => $sub->client->subscription_number ?? 'N/A',
+                    'subscription_number' => $sub->client->subscriptionNumber->number ?? 'N/A',
                     'end_date' => $sub->end_date,
                     'client_phone' => $sub->client->phone ?? 'N/A',
                     'status' => $sub->status,

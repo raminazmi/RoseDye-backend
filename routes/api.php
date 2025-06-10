@@ -31,8 +31,10 @@ Route::prefix('v1')->group(function () {
         Route::get('/subscriptions/export-pdf', [SubscriptionController::class, 'exportPdf']);
 
         // Clients
-        Route::apiResource('/clients', ClientController::class);
         Route::patch('/clients/{client}/status', [ClientController::class, 'updateStatus']);
+        Route::get('/clients/subscription-numbers', [ClientController::class, 'getSubscriptionNumbers']);
+        Route::post('/clients/subscription-numbers/{subscriptionNumberId}/toggle-availability', [ClientController::class, 'toggleSubscriptionNumberAvailability']);
+        Route::apiResource('/clients', ClientController::class);
 
         // Invoices
         Route::get('/invoices/next-number', [InvoiceController::class, 'getNextInvoiceNumber']);

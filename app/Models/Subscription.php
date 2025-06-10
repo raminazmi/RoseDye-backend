@@ -14,6 +14,7 @@ class Subscription extends Model
         'start_date',
         'end_date',
         'duration_in_days',
+        'subscription_number_id',
         'status',
     ];
 
@@ -22,10 +23,16 @@ class Subscription extends Model
         return $this->belongsTo(Client::class, 'client_id', 'id');
     }
 
+    public function subscriptionNumber()
+    {
+        return $this->belongsTo(SubscriptionNumber::class);
+    }
+
     public function checkAndUpdateStatus()
     {
-        if (Carbon::parse($this->end_date)->isPast() && $this->status === 'active') {
+        if ($this->status === 'active' && now()->gt($this->end_date)) {
             $this->update(['status' => 'expired']);
+            $this->subscriptionNumber()->update(['is_available' => true]);
         }
     }
 }
