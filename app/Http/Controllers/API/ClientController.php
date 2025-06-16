@@ -43,6 +43,7 @@ class ClientController extends Controller
             'subscription_number.required' => 'حقل رقم الاشتراك مطلوب.',
             'subscription_number.string' => 'حقل رقم الاشتراك يجب أن يكون نصًا.',
         ]);
+
         if ($validator->fails()) {
             return response()->json([
                 'status' => false,
@@ -53,50 +54,31 @@ class ClientController extends Controller
         try {
             Log::info('Attempting to create client', ['request_data' => $request->all()]);
 
+            // Check if subscription number exists
             $subscriptionNumber = SubscriptionNumber::where('number', $request->subscription_number)->first();
 
-            if ($subscriptionNumber) {
-                if ($subscriptionNumber->is_available) {
-                    // Number is available, mark it as unavailable
-                    $subscriptionNumber->is_available = false;
-                    $subscriptionNumber->save();
-                } else {
-                    // Number is taken, check the associated client's subscription status
-                    $previousClient = Client::where('subscription_number_id', $subscriptionNumber->id)->first();
-                    if ($previousClient) {
-                        $previousSubscription = $previousClient->subscriptions()->first();
-                        if ($previousSubscription && $previousSubscription->status === 'canceled') {
-                            // Clear the subscription number from the previous client
-                            $previousClient->subscription_number = null;
-                            $previousClient->subscription_number_id = null;
-                            $previousClient->save();
-                            // Mark the subscription number as unavailable for the new client
-                            $subscriptionNumber->is_available = false;
-                            $subscriptionNumber->save();
-                        } else {
-                            // Number is taken by an active client
-                            return response()->json([
-                                'status' => false,
-                                'message' => 'رقم الاشتراك غير متاح، يوجد عميل نشط له نفس رقم الاشتراك'
-                            ], 400);
-                        }
-                    } else {
-                        // No client associated, but number is marked unavailable (edge case)
-                        return response()->json([
-                            'status' => false,
-                            'message' => 'رقم الاشتراك غير متاح'
-                        ], 400);
-                    }
-                }
-            } else {
-                // Create a new subscription number
+            if (!$subscriptionNumber) {
+                // Create new subscription number if not exists
+                Log::info('Creating new subscription number', ['number' => $request->subscription_number]);
                 $subscriptionNumber = SubscriptionNumber::create([
                     'number' => $request->subscription_number,
                     'is_available' => false,
                 ]);
+            } elseif ($subscriptionNumber->is_available) {
+                // Assign if available
+                Log::info('Assigning available subscription number', ['number' => $request->subscription_number]);
+                $subscriptionNumber->is_available = false;
+                $subscriptionNumber->save();
+            } else {
+                // Return error if not available
+                Log::warning('Subscription number is not available', ['number' => $request->subscription_number]);
+                return response()->json([
+                    'status' => false,
+                    'message' => 'رقم الاشتراك غير متاح.'
+                ], 400);
             }
 
-            // Create the new client
+            // Create client
             $client = Client::create([
                 'phone' => $request->phone,
                 'current_balance' => $request->current_balance,
@@ -107,7 +89,7 @@ class ClientController extends Controller
                 'additional_gift' => $request->additional_gift ?? 0,
             ]);
 
-            // Create the subscription
+            // Create subscription
             $startDate = Carbon::parse($request->start_date);
             $endDate = Carbon::parse($request->end_date);
             $durationInDays = $startDate->diffInDays($endDate);
@@ -124,7 +106,7 @@ class ClientController extends Controller
                 'status' => $status,
             ]);
 
-            // Create the associated user
+            // Create user
             User::create([
                 'name' => 'user' . $request->subscription_number,
                 'phone' => $request->phone,
@@ -152,6 +134,7 @@ class ClientController extends Controller
         }
     }
 
+    // الدوال الأخرى (index, show, update, destroy, getSubscriptionNumbers, toggleSubscriptionNumberAvailability) تبقى كما هي
     public function index(Request $request)
     {
         try {
@@ -159,7 +142,7 @@ class ClientController extends Controller
             $page = $request->input('page', 1);
 
             $clients = Client::with(['subscriptions' => function ($query) {
-                $query->latest();
+                $query->latest()->select('id', 'client_id', 'start_date', 'end_date', 'duration_in_days'); // Include ID
             }])->paginate($perPage, ['*'], 'page', $page);
 
             return response()->json([
@@ -213,6 +196,7 @@ class ClientController extends Controller
             'subscription_number.required' => 'حقل رقم الاشتراك مطلوب.',
             'subscription_number.string' => 'حقل رقم الاشتراك يجب أن يكون نصًا.',
         ]);
+
         if ($validator->fails()) {
             return response()->json([
                 'status' => false,
@@ -226,9 +210,10 @@ class ClientController extends Controller
             $oldPhone = $client->phone;
             $oldSubscriptionNumberId = $client->subscription_number_id;
 
+            // Handle subscription number change
             if ($client->subscription_number !== $request->subscription_number) {
+                // Release old subscription number
                 if ($oldSubscriptionNumberId) {
-                    // Free the old subscription number
                     $oldSubscriptionNumber = SubscriptionNumber::find($oldSubscriptionNumberId);
                     if ($oldSubscriptionNumber) {
                         $oldSubscriptionNumber->is_available = true;
@@ -236,51 +221,33 @@ class ClientController extends Controller
                     }
                 }
 
-                // Check the new subscription number
+                // Handle new subscription number
                 $newSubscriptionNumber = SubscriptionNumber::where('number', $request->subscription_number)->first();
-                if ($newSubscriptionNumber) {
-                    if ($newSubscriptionNumber->is_available) {
-                        $newSubscriptionNumber->is_available = false;
-                        $newSubscriptionNumber->save();
-                    } else {
-                        $previousClient = Client::where('subscription_number_id', $newSubscriptionNumber->id)->first();
-                        if ($previousClient) {
-                            $previousSubscription = $previousClient->subscriptions()->first();
-                            if ($previousSubscription && $previousSubscription->status === 'canceled') {
-                                // Clear the subscription number from the previous client
-                                $previousClient->subscription_number = null;
-                                $previousClient->subscription_number_id = null;
-                                $previousClient->save();
-                                $newSubscriptionNumber->is_available = false;
-                                $newSubscriptionNumber->save();
-                            } else {
-                                // Number is taken by an active client
-                                return response()->json([
-                                    'status' => false,
-                                    'message' => 'رقم الاشتراك غير متاح، يوجد عميل نشط له نفس رقم الاشتراك'
-                                ], 400);
-                            }
-                        } else {
-                            // No client associated, but number is marked unavailable
-                            return response()->json([
-                                'status' => false,
-                                'message' => 'رقم الاشتراك غير متاح'
-                            ], 400);
-                        }
-                    }
-                } else {
-                    // Create a new subscription number
+
+                if (!$newSubscriptionNumber) {
+                    // Create new if not exists
                     $newSubscriptionNumber = SubscriptionNumber::create([
                         'number' => $request->subscription_number,
                         'is_available' => false,
                     ]);
+                } elseif ($newSubscriptionNumber->is_available) {
+                    // Assign if available
+                    $newSubscriptionNumber->is_available = false;
+                    $newSubscriptionNumber->save();
+                } else {
+                    // Return error if not available
+                    return response()->json([
+                        'status' => false,
+                        'message' => 'رقم الاشتراك غير متاح.'
+                    ], 400);
                 }
 
+                // Update client with new subscription number
                 $client->subscription_number = $request->subscription_number;
                 $client->subscription_number_id = $newSubscriptionNumber->id;
             }
 
-            // Update client details
+            // Update client fields
             $client->update([
                 'phone' => $request->input('phone', $client->phone),
                 'current_balance' => $request->input('current_balance', $client->current_balance),
@@ -288,7 +255,7 @@ class ClientController extends Controller
                 'additional_gift' => $request->input('additional_gift', $client->additional_gift),
             ]);
 
-            // Update associated user if phone changed
+            // Update user if phone changed
             if ($oldPhone !== $client->phone) {
                 $user = User::where('phone', $oldPhone)->first();
                 if ($user) {
@@ -299,7 +266,7 @@ class ClientController extends Controller
                 }
             }
 
-            // Update subscription dates if provided
+            // Update subscription dates
             if ($request->has('start_date') || $request->has('end_date')) {
                 $startDate = $request->has('start_date') ? Carbon::parse($request->start_date) : $client->subscriptions()->first()->start_date;
                 $endDate = $request->has('end_date') ? Carbon::parse($request->end_date) : $client->subscriptions()->first()->end_date;
@@ -338,6 +305,7 @@ class ClientController extends Controller
             ], 500);
         }
     }
+
 
     public function destroy($id)
     {
@@ -427,15 +395,11 @@ class ClientController extends Controller
 
                 if ($subscription) {
                     if ($subscriptionNumber->is_available) {
-                        // إذا كان الرقم متاحاً (يعني العميل موقوف)
-                        // لا يمكن جعله غير متاح إلا من خلال إنشاء/تحديث عميل
                         return response()->json([
                             'status' => false,
                             'message' => 'لا يمكن جعل الرقم غير متاح إلا من خلال إنشاء/تحديث عميل'
                         ], 400);
                     } else {
-                        // جعل الرقم متاحاً وتعليق العميل
-                        $subscription->update(['status' => 'canceled']);
                         $client->update([
                             'subscription_number_id' => null,
                             'subscription_number' => null
@@ -445,7 +409,6 @@ class ClientController extends Controller
                     }
                 }
             } else {
-                // إذا لم يكن الرقم مرتبطاً بأي عميل
                 $subscriptionNumber->is_available = !$subscriptionNumber->is_available;
                 $subscriptionNumber->save();
             }
@@ -473,6 +436,39 @@ class ClientController extends Controller
             return response()->json([
                 'status' => false,
                 'message' => 'حدث خطأ أثناء تغيير حالة التوفر: ' . $e->getMessage(),
+            ], 500);
+        }
+    }
+
+    public function getClientsNeedingInvoices(Request $request)
+    {
+        try {
+            $perPage = $request->input('per_page', 10);
+            $page = $request->input('page', 1);
+
+            $clients = Client::whereHas('subscriptions', function ($query) {
+                $query->where('status', 'active')
+                    ->where('end_date', '>=', Carbon::now()->subDays(7)); // اشتراكات تنتهي خلال 7 أيام أو أكثر
+            })
+                ->where('renewal_balance', '<', 0) // رصيد تجديد سلبي
+                ->with(['subscriptions' => function ($query) {
+                    $query->select('id', 'client_id', 'start_date', 'end_date', 'status');
+                }])
+                ->select('id', 'phone', 'subscription_number', 'subscription_number_id', 'renewal_balance')
+                ->paginate($perPage, ['*'], 'page', $page);
+
+            return response()->json([
+                'status' => true,
+                'data' => $clients->items(),
+                'total' => $clients->total(),
+                'current_page' => $clients->currentPage(),
+                'last_page' => $clients->lastPage(),
+            ]);
+        } catch (\Exception $e) {
+            Log::error('Error fetching clients needing invoices', ['message' => $e->getMessage()]);
+            return response()->json([
+                'status' => false,
+                'message' => 'فشل في جلب العملاء الذين يحتاجون إلى فواتير: ' . $e->getMessage()
             ], 500);
         }
     }

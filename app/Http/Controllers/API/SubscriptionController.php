@@ -11,6 +11,7 @@ use Omaralalwi\Gpdf\Gpdf;
 use Illuminate\Support\Facades\Validator;
 use Omaralalwi\Gpdf\GpdfConfig;
 use Carbon\Carbon;
+use App\Models\Client;
 
 class SubscriptionController extends Controller
 {
@@ -31,7 +32,7 @@ class SubscriptionController extends Controller
 
                 return [
                     'id' => $sub->id,
-                    'subscription_number' => $client->subscription_number ?? 'N/A',
+                    'subscription_number' => $client->subscription_number,
                     'invoices_count' => $client->invoices_count ?? 0,
                     'end_date' => $sub->end_date,
                     'total_due' => $client->current_balance,
@@ -277,89 +278,53 @@ class SubscriptionController extends Controller
         }
     }
 
-
-    public function updateStatus(Request $request, $id)
+    public function updateStatus(Request $request, Subscription $subscription)
     {
         $validator = Validator::make($request->all(), [
-            'status' => 'required|in:active,canceled',
-        ], [
-            'status.required' => 'حقل الحالة مطلوب.',
-            'status.in' => 'الحالة يجب أن تكون إما "نشط" أو "موقوف".',
+            'status' => 'required|in:active,expired,canceled',
         ]);
 
         if ($validator->fails()) {
             return response()->json([
                 'status' => false,
-                'errors' => $validator->errors()
+                'message' => 'فشل التحقق من الصحة',
+                'errors' => $validator->errors(),
             ], 422);
         }
 
         try {
-            $subscription = Subscription::findOrFail($id);
+            $oldStatus = $subscription->status;
+            $newStatus = $request->status;
 
-            if ($request->status === 'active') {
-                $today = Carbon::now();
-                if ($today->greaterThan($subscription->end_date)) {
-                    return response()->json([
-                        'status' => false,
-                        'message' => 'لا تستطيع تحديث الحالة إلى "نشط" لأن تاريخ انتهاء الاشتراك قد انتهى. يجب أن يجدد أولاً.'
-                    ], 403);
-                }
-            }
+            $subscription->status = $newStatus;
+            $subscription->save();
 
-            // تحديث حالة الاشتراك
-            $subscription->update([
-                'status' => $request->status,
-            ]);
+            $subscriptionNumber = $subscription->subscriptionNumber;
 
-            // تحديث حالة توفر رقم الاشتراك في جدول subscription_numbers
-            $client = $subscription->client;
-            if ($client && $client->subscription_number_id) {
-                $subscriptionNumber = SubscriptionNumber::find($client->subscription_number_id);
-                if ($subscriptionNumber) {
-                    $subscriptionNumber->is_available = $request->status === 'canceled' ? true : false;
+            if ($subscriptionNumber) {
+                if ($newStatus === 'active') {
+                    $subscriptionNumber->is_available = false;
+                    $subscriptionNumber->save();
+                } else if ($newStatus === 'expired' || $newStatus === 'canceled') {
+                    $subscriptionNumber->is_available = true;
                     $subscriptionNumber->save();
 
-                    Log::info('Subscription number availability updated', [
-                        'subscription_number_id' => $subscriptionNumber->id,
-                        'is_available' => $subscriptionNumber->is_available,
-                        'subscription_status' => $request->status,
-                    ]);
-                } else {
-                    Log::warning('Subscription number not found for client', [
-                        'client_id' => $client->id,
-                        'subscription_number_id' => $client->subscription_number_id,
-                    ]);
+                    if ($subscription->client && $subscription->client->subscription_number_id === $subscriptionNumber->id) {
+                        $subscription->client->update(['subscription_number_id' => null]);
+                    }
                 }
-            } else {
-                Log::warning('No client or subscription number ID found for subscription', [
-                    'subscription_id' => $subscription->id,
-                ]);
             }
 
             return response()->json([
                 'status' => true,
+                'message' => 'تم تحديث حالة الاشتراك بنجاح',
                 'data' => $subscription,
-                'message' => 'تم تحديث حالة الاشتراك بنجاح'
             ]);
-        } catch (\Illuminate\Database\Eloquent\ModelNotFoundException $e) {
-            Log::error('Subscription not found', [
-                'subscription_id' => $id,
-                'message' => $e->getMessage(),
-            ]);
-            return response()->json([
-                'status' => false,
-                'message' => 'الاشتراك غير موجود'
-            ], 404);
         } catch (\Exception $e) {
-            Log::error('Error updating subscription status', [
-                'subscription_id' => $id,
-                'message' => $e->getMessage(),
-                'trace' => $e->getTraceAsString(),
-            ]);
+            Log::error('Error updating subscription status: ' . $e->getMessage(), ['trace' => $e->getTraceAsString()]);
             return response()->json([
                 'status' => false,
-                'message' => 'حدث خطأ أثناء تحديث الحالة: ' . $e->getMessage()
+                'message' => 'حدث خطأ أثناء تحديث حالة الاشتراك: ' . $e->getMessage(),
             ], 500);
         }
     }
@@ -369,15 +334,18 @@ class SubscriptionController extends Controller
         try {
             $abandoned = Subscription::where('status', 'active')
                 ->whereDoesntHave('client.invoices', function ($query) {
-                    $query->where('date', '>=', Carbon::now()->subDays(120));
+                    $query->where('date', '>=', Carbon::now()->subDays(1));
                 })
-                ->with('client')
+                ->with(['client' => function ($query) {
+                    $query->select('id', 'phone', 'subscription_number');
+                }])
+                ->select('id', 'client_id', 'end_date', 'status')
                 ->get();
 
             $formattedData = $abandoned->map(function ($sub) {
                 return [
                     'id' => $sub->id,
-                    'subscription_number' => $sub->client->subscriptionNumber->number ?? 'N/A',
+                    'subscription_number' => $sub->client->subscription_number,
                     'end_date' => $sub->end_date,
                     'client_phone' => $sub->client->phone ?? 'N/A',
                     'status' => $sub->status,
@@ -403,21 +371,28 @@ class SubscriptionController extends Controller
             $perPage = $request->input('per_page', 5);
             $page = $request->input('page', 1);
 
+            $today = Carbon::today();
+            $tenDaysFromNow = $today->copy()->addDays(10);
+
             $expiringSoon = Subscription::where('status', 'active')
+                ->whereBetween('end_date', [$today, $tenDaysFromNow])
                 ->with(['client' => function ($query) {
-                    $query->withCount('invoices');
-                }])->paginate($perPage, ['*'], 'page', $page);
+                    $query->withCount('invoices')
+                        ->select('id', 'phone', 'subscription_number', 'renewal_balance');
+                }])
+                ->select('id', 'client_id', 'start_date', 'end_date', 'status', 'duration_in_days')
+                ->paginate($perPage, ['*'], 'page', $page);
 
             $expiringSoon->getCollection()->transform(function ($sub) {
                 return [
                     'id' => $sub->id,
-                    'subscription_number' => $sub->client->subscription_number ?? 'N/A',
+                    'subscription_number' => $sub->client->subscription_number,
                     'end_date' => $sub->end_date,
                     'client_phone' => $sub->client->phone ?? 'N/A',
                     'status' => $sub->status,
                     'total_due' => $sub->client->current_balance ?? 0,
                     'client' => [
-                        'subscription_number' => $sub->client->subscription_number ?? 'N/A',
+                        'subscription_number' => $sub->client->subscription_number,
                         'phone' => $sub->client->phone ?? 'N/A',
                         'renewal_balance' => $sub->client->renewal_balance ?? 'N/A',
                         'additional_gift' => $sub->client->additional_gift ?? 'N/A',

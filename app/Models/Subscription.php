@@ -14,6 +14,7 @@ class Subscription extends Model
         'start_date',
         'end_date',
         'duration_in_days',
+        'subscription_number',
         'subscription_number_id',
         'status',
     ];

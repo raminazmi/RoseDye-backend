@@ -8,7 +8,8 @@ use App\Http\Controllers\API\{
     SubscriptionController,
     VerificationController,
     StatisticsController,
-    UserController
+    UserController,
+    SubscriptionNumberController
 };
 
 Route::prefix('v1')->group(function () {
@@ -34,6 +35,7 @@ Route::prefix('v1')->group(function () {
         Route::patch('/clients/{client}/status', [ClientController::class, 'updateStatus']);
         Route::get('/clients/subscription-numbers', [ClientController::class, 'getSubscriptionNumbers']);
         Route::post('/clients/subscription-numbers/{subscriptionNumberId}/toggle-availability', [ClientController::class, 'toggleSubscriptionNumberAvailability']);
+        Route::get('/clients/needing-invoices', [ClientController::class, 'getClientsNeedingInvoices']);
         Route::apiResource('/clients', ClientController::class);
 
         // Invoices
@@ -51,6 +53,11 @@ Route::prefix('v1')->group(function () {
         Route::post('/subscriptions/{subscription}/notify', [SubscriptionController::class, 'sendNotification']);
         Route::patch('/subscriptions/{subscription}/status', [SubscriptionController::class, 'updateStatus']);
         Route::apiResource('subscriptions', SubscriptionController::class);
+
+        // Subscription Numbers
+        Route::patch('/subscription-numbers/{id}/toggle-availability', [ClientController::class, 'toggleSubscriptionNumberAvailability']);
+        Route::patch('/subscription-numbers/{id}/assign-client', [SubscriptionNumberController::class, 'assignClient']); // New route for assigning client
+        Route::apiResource('subscription-numbers', SubscriptionNumberController::class);
 
         // Statistics
         Route::get('/statistics', [StatisticsController::class, 'index']);

@@ -15,9 +15,14 @@ class Client extends Model
         'phone',
         'current_balance',
         'renewal_balance',
+        'subscription_number',
         'subscription_number_id',
         'original_gift',
         'additional_gift',
+    ];
+
+    protected $attributes = [
+        'renewal_balance' => 0,
     ];
 
     public function subscriptions()
