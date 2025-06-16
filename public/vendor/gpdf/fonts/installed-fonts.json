@@ -78,11 +78,11 @@
         "normal": "DejaVuSerif"
     },
     "almarai": {
-        "normal": "almarai_normal_3d48c48c2313d4818814043e34c0dd6a",
-        "bold": "C:\\Users\\ramin\\Downloads\\RoseDye\\RoseDye-Backend\\public\\vendor\\gpdf\\fonts\/almarai_bold_e3ff6d8e4f69580643326d8c92be196d",
+        "normal": "C:\\Users\\ramin\\OneDrive\\Desktop\\\u0623\u0639\u0645\u0627\u0644\u064a\\\u0645\u062c\u0644\u062f \u062c\u062f\u064a\u062f (2)\\RoseDye\\RoseDye-Backend\\public\\vendor\\gpdf\\fonts\/almarai_normal_3d48c48c2313d4818814043e34c0dd6a",
+        "bold": "almarai_bold_e3ff6d8e4f69580643326d8c92be196d",
         "italic": "C:\\Users\\ramin\\Downloads\\RoseDye-Backend\\public\\vendor\\gpdf\\fonts\/Almarai-Italic",
         "bold_italic": "C:\\Users\\ramin\\Downloads\\RoseDye-Backend\\public\\vendor\\gpdf\\fonts\/Almarai-BoldItalic",
-        "300": "C:\\Users\\ramin\\Downloads\\RoseDye\\RoseDye-Backend\\public\\vendor\\gpdf\\fonts\/almarai_300_ffd55b3f23b7b98d73414d45a1dded25"
+        "300": "C:\\Users\\ramin\\OneDrive\\Desktop\\\u0623\u0639\u0645\u0627\u0644\u064a\\\u0645\u062c\u0644\u062f \u062c\u062f\u064a\u062f (2)\\RoseDye\\RoseDye-Backend\\public\\vendor\\gpdf\\fonts\/almarai_300_ffd55b3f23b7b98d73414d45a1dded25"
     },
     "cairo": {
         "normal": "Cairo-Normal",
@@ -112,15 +112,15 @@
         "normal": "font_awesome_6_brands_normal_36faa0e194d3288643f7144dedd8e1b1"
     },
     "font awesome 6 free": {
-        "normal": "font_awesome_6_free_normal_cf2d7daaeabedac0226ae26fc7e4f075",
-        "900": "C:\\Users\\ramin\\Downloads\\RoseDye\\RoseDye-Backend\\public\\vendor\\gpdf\\fonts\/font_awesome_6_free_900_665c8d2ea728525da852b5cd3a1d51a5"
+        "normal": "C:\\Users\\ramin\\OneDrive\\Desktop\\\u0623\u0639\u0645\u0627\u0644\u064a\\\u0645\u062c\u0644\u062f \u062c\u062f\u064a\u062f (2)\\RoseDye\\RoseDye-Backend\\public\\vendor\\gpdf\\fonts\/font_awesome_6_free_normal_cf2d7daaeabedac0226ae26fc7e4f075",
+        "900": "font_awesome_6_free_900_665c8d2ea728525da852b5cd3a1d51a5"
     },
     "font awesome 5 brands": {
         "normal": "font_awesome_5_brands_normal_36faa0e194d3288643f7144dedd8e1b1"
     },
     "font awesome 5 free": {
-        "900": "font_awesome_5_free_900_665c8d2ea728525da852b5cd3a1d51a5",
-        "normal": "C:\\Users\\ramin\\Downloads\\RoseDye\\RoseDye-Backend\\public\\vendor\\gpdf\\fonts\/font_awesome_5_free_normal_cf2d7daaeabedac0226ae26fc7e4f075"
+        "900": "C:\\Users\\ramin\\OneDrive\\Desktop\\\u0623\u0639\u0645\u0627\u0644\u064a\\\u0645\u062c\u0644\u062f \u062c\u062f\u064a\u062f (2)\\RoseDye\\RoseDye-Backend\\public\\vendor\\gpdf\\fonts\/font_awesome_5_free_900_665c8d2ea728525da852b5cd3a1d51a5",
+        "normal": "font_awesome_5_free_normal_cf2d7daaeabedac0226ae26fc7e4f075"
     },
     "fontawesome": {
         "normal": "fontawesome_normal_6aa5cc0b95be2651581a2d7ad4a9d038"
